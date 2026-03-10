@@ -1,8 +1,11 @@
 """News API adapters: fetch from external APIs and normalize to StandardizedNewsItem."""
 from datetime import datetime
 from typing import AsyncIterator
+import logging
 import httpx
 from schemas.news import StandardizedNewsItem
+
+logger = logging.getLogger(__name__)
 
 
 def _topic_for_source(source_name: str) -> str:
@@ -28,17 +31,25 @@ def _normalize_date(d: str | int | None) -> str:
 
 
 async def _fetch_alpha_vantage(api_key: str) -> AsyncIterator[StandardizedNewsItem]:
-    """Alpha Vantage News & Sentiment API."""
+    """Alpha Vantage News & Sentiment API. Free tier may return only a few articles per request."""
     if not api_key:
         return
     url = "https://www.alphavantage.co/query"
     params = {"function": "NEWS_SENTIMENT", "apikey": api_key, "limit": 50}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.get(url, params=params)
-        if r.status_code != 200:
-            return
-        data = r.json()
-    for item in data.get("feed", [])[:20]:
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.get(url, params=params)
+            if r.status_code != 200:
+                logger.warning("Alpha Vantage returned status %s", r.status_code)
+                return
+            data = r.json()
+        feed = data.get("feed", [])
+        if not feed and data.get("Note"):
+            logger.info("Alpha Vantage rate limit or quota: %s", data.get("Note", "")[:80])
+    except Exception as e:
+        logger.warning("Alpha Vantage fetch failed: %s", e)
+        return
+    for item in feed[:30]:
         yield StandardizedNewsItem(
             platform="Alpha Vantage",
             source_name="Alpha Vantage News Sentiment",
@@ -67,7 +78,7 @@ async def _fetch_finnhub(api_key: str) -> AsyncIterator[StandardizedNewsItem]:
         if r.status_code != 200:
             return
         data = r.json()
-    for item in (data if isinstance(data, list) else [])[:20]:
+    for item in (data if isinstance(data, list) else [])[:30]:
         yield StandardizedNewsItem(
             platform="Finnhub",
             source_name=item.get("source", "Finnhub"),
@@ -90,14 +101,14 @@ async def _fetch_newsapi(api_key: str) -> AsyncIterator[StandardizedNewsItem]:
         "apiKey": api_key,
         "category": "business",
         "language": "en",
-        "pageSize": 20,
+        "pageSize": 30,
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.get(url, params=params)
         if r.status_code != 200:
             return
         data = r.json()
-    for item in data.get("articles", [])[:20]:
+    for item in data.get("articles", [])[:30]:
         source = item.get("source", {}) or {}
         yield StandardizedNewsItem(
             platform=source.get("name", "NewsAPI"),
@@ -113,13 +124,26 @@ async def _fetch_newsapi(api_key: str) -> AsyncIterator[StandardizedNewsItem]:
 
 
 async def _mock_sources() -> AsyncIterator[StandardizedNewsItem]:
-    """Mock news when no API keys are set - for development."""
+    """Mock news when no API keys are set - macro-oriented headlines for better theme detection."""
     mock = [
-        ("Bloomberg", "US inflation rates higher than expected", "09/03/2026", "CPI data shows..."),
-        ("Reuters", "Fed signals potential rate hold in March", "09/03/2026", "Federal Reserve..."),
-        ("Reuters", "Oil prices rise on Middle East tensions", "08/03/2026", "Iran and Iraq..."),
-        ("Reuters", "AI chip demand drives tech earnings", "08/03/2026", "Nvidia and AMD..."),
-        ("Bloomberg", "Banking sector stress in regional lenders", "07/03/2026", "Regional banks..."),
+        ("Bloomberg", "US inflation rates higher than expected in February", "09/03/2026", "CPI data shows persistent price pressures."),
+        ("Reuters", "Fed signals potential rate hold in March meeting", "09/03/2026", "Federal Reserve officials indicate patience on cuts."),
+        ("Reuters", "Oil prices rise on Middle East supply concerns", "08/03/2026", "Geopolitical tensions weigh on energy markets."),
+        ("Reuters", "European Central Bank keeps rates unchanged", "08/03/2026", "ECB holds policy steady amid growth concerns."),
+        ("Bloomberg", "Banking sector stress in regional lenders", "08/03/2026", "Regional banks face funding pressures."),
+        ("Reuters", "Global supply chain disruptions hit manufacturing", "07/03/2026", "Shipping and logistics delays persist."),
+        ("Reuters", "Labor market cools as job openings decline", "07/03/2026", "Wage growth moderates in latest report."),
+        ("Bloomberg", "Fiscal policy expansion in major economies", "06/03/2026", "Government spending supports growth."),
+        ("Reuters", "Geopolitical risk premium in commodity markets", "06/03/2026", "Oil and gold rally on uncertainty."),
+        ("Reuters", "Interest rate expectations shift after payrolls", "05/03/2026", "Markets price fewer cuts this year."),
+        ("Bloomberg", "Energy prices volatility amid weather and conflict", "05/03/2026", "Natural gas and crude swing."),
+        ("Reuters", "Inflation expectations edge higher in survey", "04/03/2026", "Consumers see prices rising."),
+        ("Reuters", "Banking regulation tightening after stress tests", "04/03/2026", "Regulators flag capital requirements."),
+        ("Bloomberg", "Trade tensions and tariffs in focus", "03/03/2026", "Cross-border trade policy in spotlight."),
+        ("Reuters", "Housing market slowdown as mortgage rates stay high", "03/03/2026", "Affordability weighs on demand."),
+        ("Reuters", "Currency markets react to central bank divergence", "02/03/2026", "Dollar strength on rate differentials."),
+        ("Bloomberg", "Commodity supercycle debate heats up", "02/03/2026", "Copper, lithium in focus for energy transition."),
+        ("Reuters", "Sovereign debt sustainability in emerging markets", "01/03/2026", "Borrowing costs rise for EM issuers."),
     ]
     for platform, headline, pub_date, meta in mock:
         yield StandardizedNewsItem(
@@ -160,8 +184,64 @@ class NewsAdapterRegistry:
 
 
 async def get_standardized_news(settings) -> list[StandardizedNewsItem]:
-    """Collect all standardized news items from configured adapters."""
-    out: list[StandardizedNewsItem] = []
-    async for item in NewsAdapterRegistry.stream_all(settings):
-        out.append(item)
+    """Collect from ALL configured APIs and interleave so the pipeline gets a mix from every source."""
+    has_any = bool(
+        getattr(settings, "alpha_vantage_api_key", None)
+        or getattr(settings, "finnhub_api_key", None)
+        or getattr(settings, "news_api_key", None)
+    )
+    if not has_any:
+        out: list[StandardizedNewsItem] = []
+        async for item in _mock_sources():
+            out.append(item)
+        return out
+
+    # Fetch from each configured source into separate lists (one failing API doesn't block others)
+    sources: list[list[StandardizedNewsItem]] = []
+    if getattr(settings, "alpha_vantage_api_key", None):
+        try:
+            av_list = []
+            async for item in _fetch_alpha_vantage(settings.alpha_vantage_api_key):
+                av_list.append(item)
+            if av_list:
+                sources.append(av_list)
+                logger.info("Alpha Vantage: %d articles", len(av_list))
+        except Exception as e:
+            logger.warning("Alpha Vantage skipped: %s", e)
+    if getattr(settings, "finnhub_api_key", None):
+        try:
+            fh_list = []
+            async for item in _fetch_finnhub(settings.finnhub_api_key):
+                fh_list.append(item)
+            if fh_list:
+                sources.append(fh_list)
+                logger.info("Finnhub: %d articles", len(fh_list))
+        except Exception as e:
+            logger.warning("Finnhub skipped: %s", e)
+    if getattr(settings, "news_api_key", None):
+        try:
+            na_list = []
+            async for item in _fetch_newsapi(settings.news_api_key):
+                na_list.append(item)
+            if na_list:
+                sources.append(na_list)
+                logger.info("NewsAPI: %d articles", len(na_list))
+        except Exception as e:
+            logger.warning("NewsAPI skipped: %s", e)
+
+    if not sources:
+        return []
+
+    # Interleave: take one from each source in turn so we get a mix from all APIs
+    out = []
+    idx = 0
+    while True:
+        added = 0
+        for src_list in sources:
+            if idx < len(src_list):
+                out.append(src_list[idx])
+                added += 1
+        if added == 0:
+            break
+        idx += 1
     return out

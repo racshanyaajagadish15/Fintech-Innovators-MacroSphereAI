@@ -57,6 +57,7 @@ class ThemeDetectionAgent:
             for idx, (label, group) in enumerate(bucketed.items())
             if len(group) >= self.min_cluster_size
         ]
+        theme_details = self._relabel_as_macro_themes(theme_details)
         counts = [t.article_count for t in theme_details]
         total = sum(counts) or 1
         criticality = self._criticality(theme_details, bucketed)
@@ -139,6 +140,52 @@ class ThemeDetectionAgent:
             theme_details.append(self._build_theme_output(f"theme_{cid}", label, group))
         return theme_details
 
+    def _relabel_as_macro_themes(self, theme_details: list[ThemeOutput]) -> list[ThemeOutput]:
+        """Use LLM to convert entity-based labels into short macro themes (e.g. Interest rates, Inflation)."""
+        if not theme_details:
+            return theme_details
+        try:
+            from .llm import get_llm
+            llm = get_llm(temperature=0.2)
+            prompts = []
+            for t in theme_details:
+                sample = " | ".join((t.representative_events or [t.label])[:3])
+                prompts.append(f"Cluster: {sample}")
+            user_content = "For each cluster below, output ONE short macro theme (2-4 words). Use topics like: Interest rates, Inflation, Geopolitical risk, Energy prices, Banking stress, Supply chain, Labor market, Fiscal policy, etc. Do NOT use company or person names. Output only a JSON array of strings, one per line, in the same order.\n\n" + "\n".join(prompts)
+            msg = [
+                {"role": "system", "content": "You are a macro economist. Reply only with a valid JSON array of strings, no other text."},
+                {"role": "user", "content": user_content},
+            ]
+            out = llm.invoke(msg)
+            text = out.content.strip()
+            if "```" in text:
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:].strip()
+            import json
+            text = text.strip().strip("`").strip()
+            names = json.loads(text)
+            if isinstance(names, dict) and "themes" in names:
+                names = names["themes"]
+            if isinstance(names, list) and len(names) >= len(theme_details):
+                return [
+                    ThemeOutput(
+                        theme_id=t.theme_id,
+                        label=(names[i].strip() if isinstance(names[i], str) else t.label)[:80],
+                        article_count=t.article_count,
+                        mention_count=t.mention_count,
+                        trend=t.trend,
+                        source_topics=t.source_topics,
+                        representative_events=t.representative_events,
+                        regions=t.regions,
+                        asset_classes=t.asset_classes,
+                    )
+                    for i, t in enumerate(theme_details)
+                ]
+        except Exception:
+            pass
+        return theme_details
+
     def run(
         self,
         items: list[ExtractedEntitiesItem],
@@ -156,6 +203,7 @@ class ThemeDetectionAgent:
         # Cosine distance = 1 - cosine_sim; threshold 0.65 -> merge if sim > ~0.35
         labels = _cluster_agglomerative(embeddings, n_clusters=None, distance_threshold=self.distance_threshold)
         theme_details = self._label_clusters(items, labels)
+        theme_details = self._relabel_as_macro_themes(theme_details)
 
         themes: list[str] = [t.label for t in theme_details]
         from collections import defaultdict

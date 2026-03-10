@@ -50,6 +50,15 @@ class InsightRepository:
             )
             return r.scalars().all()
 
+    @staticmethod
+    async def list_recent(limit: int = 10):
+        sm = get_session_maker()
+        async with sm() as session:
+            r = await session.execute(
+                select(StoredInsight).order_by(StoredInsight.created_at.desc()).limit(limit)
+            )
+            return r.scalars().all()
+
 
 class SimulatorRunRepository:
     @staticmethod
@@ -61,3 +70,12 @@ class SimulatorRunRepository:
             await session.commit()
             await session.refresh(row)
             return row
+
+    @staticmethod
+    async def latest(limit: int = 10):
+        sm = get_session_maker()
+        async with sm() as session:
+            r = await session.execute(
+                select(SimulatorRun).order_by(SimulatorRun.created_at.desc()).limit(limit)
+            )
+            return r.scalars().all()

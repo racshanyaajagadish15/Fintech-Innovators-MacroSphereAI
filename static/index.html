@@ -3,188 +3,340 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MacroSphere AI</title>
+  <title>MacroSphere AI — Multi-Agent Macroeconomics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <div class="layout">
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-mark">M</div>
-        <div>
-          <div class="brand-title">MacroSphere AI</div>
-          <div class="brand-sub">Multi-agent macro desk</div>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <!-- Loading overlay (pipeline run) -->
+  <div id="loadingOverlay" class="loading-overlay" aria-hidden="true" aria-live="polite">
+    <div class="loading-overlay__content">
+      <div class="loading-overlay__spinner"></div>
+      <p class="loading-overlay__text" id="loadingOverlayText">Running pipeline…</p>
+    </div>
+  </div>
+
+  <!-- Success / info toast -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- Modal: overview detail popups -->
+  <div id="overviewModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-hidden="true">
+    <div class="modal__backdrop" id="modalBackdrop"></div>
+    <div class="modal__panel">
+      <header class="modal__head">
+        <h2 id="modalTitle" class="modal__title"></h2>
+        <button type="button" class="modal__close" id="modalClose" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal__body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- Ticker strip -->
+  <div class="ticker-bar" id="tickerBar">
+    <div class="ticker-track">
+      <div class="ticker-list" id="tickerList"></div>
+      <div class="ticker-list ticker-list--dup" id="tickerListDup" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <!-- Landing hero -->
+  <header class="hero" id="hero">
+    <div class="hero__bg">
+      <div class="hero__gradient hero__gradient--1"></div>
+      <div class="hero__gradient hero__gradient--2"></div>
+    </div>
+    <div class="hero__content">
+      <p class="hero__badge">Multi-Agent Macroeconomics</p>
+      <h1 class="hero__headline">
+        <span class="hero__line">Detect themes.</span>
+        <span class="hero__line">Investigate signals.</span>
+        <span class="hero__line">Simulate risk.</span>
+      </h1>
+      <p class="hero__desc">AI analysts monitoring global news, building macro narratives, and forecasting market implications in real time.</p>
+      <div class="hero__cta">
+        <button type="button" class="btn btn--primary btn--xl" id="heroEnterBtn">Enter dashboard</button>
+        <a href="#pipeline" class="btn btn--outline btn--xl" id="heroScrollBtn">Run pipeline</a>
+      </div>
+      <div class="hero__stats">
+        <div class="hero__stat"><span class="hero__stat-num" id="heroMetric1">—</span><span class="hero__stat-label">Themes</span></div>
+        <div class="hero__stat"><span class="hero__stat-num" id="heroMetric2">—</span><span class="hero__stat-label">Articles</span></div>
+        <div class="hero__stat"><span class="hero__stat-num" id="heroMetric3">—</span><span class="hero__stat-label">Alerts</span></div>
+      </div>
+    </div>
+    <div class="hero__scroll">
+      <span>Scroll</span>
+      <div class="hero__scroll-bar"></div>
+    </div>
+  </header>
+
+  <!-- App shell -->
+  <div class="app" id="dashboard">
+    <header class="app-header">
+      <div class="app-header__brand">
+        <div class="logo">
+          <span class="logo__icon">M</span>
+          <span class="logo__name">MacroSphere AI</span>
         </div>
       </div>
-
-      <nav class="nav">
-        <button class="nav-link active" data-view="overview">Overview</button>
-        <button class="nav-link" data-view="themes">Theme Lab</button>
-        <button class="nav-link" data-view="map">World Map</button>
+      <nav class="app-nav">
+        <button type="button" class="app-nav__item active" data-view="overview">Overview</button>
+        <button type="button" class="app-nav__item" data-view="themes">Theme Lab</button>
+        <button type="button" class="app-nav__item" data-view="news">News</button>
+        <button type="button" class="app-nav__item" data-view="simulation">Simulation</button>
+        <button type="button" class="app-nav__item" data-view="map">World Map</button>
       </nav>
+      <div class="app-header__actions">
+        <button type="button" class="btn btn--primary" id="runPipelineBtn">Run pipeline</button>
+      </div>
+    </header>
 
-      <div class="run-panel panel">
-        <div class="mini-title">Pipeline Control</div>
-        <label for="maxNews">News limit</label>
-        <input id="maxNews" type="number" min="1" max="50" value="15">
-        <label for="criticalityThreshold">Criticality threshold</label>
-        <input id="criticalityThreshold" type="number" min="0" max="1" step="0.05" value="0.2">
-        <label for="persistRun">Persistence</label>
-        <select id="persistRun">
-          <option value="true" selected>Store run</option>
-          <option value="false">Preview only</option>
-        </select>
-        <button class="primary-btn full" id="runPipelineBtn">Run pipeline</button>
-        <button class="ghost-btn full" id="refreshStateBtn">Refresh state</button>
-        <div class="status-card">
-          <div id="pipelineStatus">Idle</div>
-          <div id="lastRefresh">No recent run</div>
+    <div class="app-body">
+      <!-- Pipeline strip + KPIs -->
+      <section class="strip strip--pipeline" id="pipeline">
+        <div id="pipelineNotReadyBanner" class="banner banner--warn" style="display: none;" role="alert">
+          <span>Pipeline requires <strong>GROQ_API_KEY</strong> in <code>.env</code>. Set it to run the pipeline.</span>
+        </div>
+        <div class="strip__content">
+          <div class="strip__text">
+            <span class="strip__label">Macro Intelligence</span>
+            <h2 class="strip__title">Detect themes, explain criticality, map spillovers, simulate risk.</h2>
+            <p class="strip__desc">Run the pipeline to surface top themes, live news, risk analysis, and scenario simulation.</p>
+          </div>
+          <div class="kpis">
+            <div class="kpi"><span class="kpi__label">Articles</span><span class="kpi__value" id="metricArticles">0</span></div>
+            <div class="kpi"><span class="kpi__label">Themes</span><span class="kpi__value" id="metricThemes">0</span></div>
+            <div class="kpi"><span class="kpi__label">Alerts</span><span class="kpi__value" id="metricAlerts">0</span></div>
+            <div class="kpi"><span class="kpi__label">Scenario</span><span class="kpi__value" id="metricScenario">—</span></div>
+          </div>
+        </div>
+        <div class="strip__controls">
+          <div class="control-group" title="Max articles from all sources (Alpha Vantage, Finnhub, NewsAPI) to analyze in this run.">
+            <label for="maxNews">News limit</label>
+            <input id="maxNews" type="number" min="1" max="100" value="25">
+            <span class="control-hint">Articles to analyze (from all APIs)</span>
+          </div>
+          <div class="control-group" title="Themes above this criticality (0–1) get deep investigation and risk analysis.">
+            <label for="criticalityThreshold">Threshold</label>
+            <input id="criticalityThreshold" type="number" min="0" max="1" step="0.05" value="0.2">
+            <span class="control-hint">Min criticality for investigation</span>
+          </div>
+          <div class="control-group" title="Store run: save themes and insights to history. Preview only: run without saving.">
+            <label for="persistRun">Persistence</label>
+            <select id="persistRun">
+              <option value="true" selected>Store run</option>
+              <option value="false">Preview only</option>
+            </select>
+            <span class="control-hint">Save to history or preview</span>
+          </div>
+          <button type="button" class="btn btn--ghost" id="refreshStateBtn">Refresh</button>
+          <div class="strip__status">
+            <span id="pipelineStatus">Idle</span>
+            <span class="strip__status-time" id="lastRefresh">No recent run</span>
+          </div>
         </div>
         <div class="error-banner" id="pipelineError"></div>
-      </div>
-    </aside>
+      </section>
 
-    <main class="main">
-      <section class="hero panel">
-        <div class="eyebrow">Macro Intelligence Workflow</div>
-        <h1>Detect themes, explain criticality, map spillovers, simulate risk.</h1>
-        <p class="hero-copy">
-          This interface uses the current backend to surface top macro themes, live monitored news, investigation logic, risk analysis,
-          scenario simulation, and connection-agent geography in a usable dashboard flow.
-        </p>
-        <div class="hero-metrics">
-          <div class="metric-card"><span>Articles</span><strong id="metricArticles">0</strong></div>
-          <div class="metric-card"><span>Themes</span><strong id="metricThemes">0</strong></div>
-          <div class="metric-card"><span>Alerts</span><strong id="metricAlerts">0</strong></div>
-          <div class="metric-card"><span>Scenario Confidence</span><strong id="metricScenario">-</strong></div>
+      <!-- Overview view -->
+      <section class="view view--overview active" data-view="overview">
+        <div id="emptyState" class="empty-state" aria-hidden="true">
+          <div class="empty-state__inner">
+            <div class="empty-state__icon" aria-hidden="true">◇</div>
+            <h2 class="empty-state__title">No data yet</h2>
+            <p class="empty-state__desc">Run the pipeline to fetch news, detect macro themes, and surface risk insights.</p>
+            <button type="button" class="btn btn--primary btn--xl" id="emptyStateRunBtn">Run pipeline</button>
+          </div>
+        </div>
+        <div id="overviewContent" class="overview-content">
+        <!-- Summary strip: at-a-glance -->
+        <div class="overview-summary">
+          <div class="overview-summary__item">
+            <span class="overview-summary__value" id="overviewNumThemes">0</span>
+            <span class="overview-summary__label">Themes</span>
+          </div>
+          <div class="overview-summary__item">
+            <span class="overview-summary__value" id="overviewNumAlerts">0</span>
+            <span class="overview-summary__label">Alerts</span>
+          </div>
+          <div class="overview-summary__item">
+            <span class="overview-summary__value" id="overviewNumArticles">0</span>
+            <span class="overview-summary__label">Articles</span>
+          </div>
+          <div class="overview-summary__item">
+            <span class="overview-summary__value" id="overviewLastRun">—</span>
+            <span class="overview-summary__label">Last run</span>
+          </div>
+        </div>
+
+        <!-- Main row: Themes + Alerts (compact, no scroll) -->
+        <div class="overview-row">
+          <section class="overview-block overview-block--themes">
+            <header class="overview-block__head">
+              <h2 class="overview-block__title">Top themes</h2>
+              <button type="button" class="overview-block__link" id="openThemesModal" aria-label="View all themes">View all</button>
+            </header>
+            <div id="themeSummaryGrid" class="overview-themes"></div>
+          </section>
+          <section class="overview-block overview-block--alerts">
+            <header class="overview-block__head">
+              <h2 class="overview-block__title">Key alerts</h2>
+              <button type="button" class="overview-block__link" id="openAlertsModal" aria-label="View all alerts">View all</button>
+            </header>
+            <div id="alertBoard" class="overview-alerts"></div>
+          </section>
+        </div>
+
+        <!-- Risk pulse: full-width highlighted section -->
+        <section class="overview-risk-section" id="riskPulseSection">
+          <header class="overview-risk-section__head">
+            <h2 class="overview-risk-section__title">Risk pulse</h2>
+            <p class="overview-risk-section__sub">Theme-to-market implications</p>
+          </header>
+          <div id="riskPulseBoard" class="overview-risk-grid"></div>
+        </section>
         </div>
       </section>
 
-      <section class="view active" data-view="overview">
-        <div class="content-grid">
-          <div class="panel section">
-            <div class="section-head">
-              <div>
-                <div class="section-kicker">Main Dashboard</div>
-                <h2>Top macro themes detected</h2>
+      <!-- Theme Lab view: theme selector + insights for selected theme -->
+      <section class="view view--themes" data-view="themes">
+        <div class="lab lab--themes">
+          <aside class="lab__selector">
+            <section class="card">
+              <header class="card__head">
+                <span class="card__kicker">Select theme</span>
+                <h2 class="card__title">Available themes</h2>
+              </header>
+              <div class="card__body">
+                <div id="themeSelectorList" class="theme-selector-list"></div>
               </div>
-            </div>
-            <div id="themeSummaryGrid" class="card-grid"></div>
-          </div>
-
-          <div class="panel section">
-            <div class="section-head">
-              <div>
-                <div class="section-kicker">Key Alerts</div>
-                <h2>What needs attention now</h2>
+            </section>
+          </aside>
+          <div class="lab__detail">
+            <section class="card card--sticky">
+              <header class="card__head card__head--row">
+                <div>
+                  <span class="card__kicker">Theme insights</span>
+                  <h2 class="card__title" id="selectedThemeTitle">Select a theme</h2>
+                </div>
+                <button type="button" class="btn btn--secondary" id="explainThemeBtn" disabled>Explain why</button>
+              </header>
+              <div class="card__body">
+                <div id="selectedThemeStats" class="stats-row stats-row--icons"></div>
+                <div class="block">
+                  <h3 class="block__title">Theme narrative</h3>
+                  <div id="explainOutput" class="note-box">Choose a theme from the list to see narrative, related articles, and risk analysis.</div>
+                </div>
+                <div class="block">
+                  <h3 class="block__title">Related articles</h3>
+                  <div id="themeArticles" class="card-list"></div>
+                </div>
+                <div class="block">
+                  <h3 class="block__title">Risk analysis</h3>
+                  <div id="themeRiskPanel" class="card-list"></div>
+                </div>
               </div>
-            </div>
-            <div id="alertBoard" class="stack"></div>
-          </div>
-        </div>
-
-        <div class="content-grid">
-          <div class="panel section">
-            <div class="section-head">
-              <div>
-                <div class="section-kicker">Institutional Memory</div>
-                <h2>Recent runs and stored insights</h2>
-              </div>
-            </div>
-            <div id="historyBoard" class="stack"></div>
-          </div>
-
-          <div class="panel section">
-            <div class="section-head">
-              <div>
-                <div class="section-kicker">Risk Pulse</div>
-                <h2>Latest theme-to-market implications</h2>
-              </div>
-            </div>
-            <div id="riskPulseBoard" class="stack"></div>
-          </div>
-        </div>
-      </section>
-
-      <section class="view" data-view="themes">
-        <div class="content-grid wide-left">
-          <div class="panel section">
-            <div class="section-head">
-              <div>
-                <div class="section-kicker">Live Feed</div>
-                <h2>News monitoring output</h2>
-              </div>
-            </div>
-            <div class="toolbar">
-              <input id="newsSearch" type="text" placeholder="Filter news by headline, entity, region, or source">
-            </div>
-            <div id="newsFeed" class="stack"></div>
-          </div>
-
-          <div class="panel section sticky-section">
-            <div class="section-head">
-              <div>
-                <div class="section-kicker">Theme Investigation</div>
-                <h2 id="selectedThemeTitle">Select a theme</h2>
-              </div>
-              <button class="secondary-btn" id="explainThemeBtn" disabled>Explain why</button>
-            </div>
-            <div id="selectedThemeStats" class="stats-grid"></div>
-            <div class="subsection">
-              <h3>Theme narrative</h3>
-              <div id="explainOutput" class="note-card">Pick a theme from the dashboard or feed to inspect volume, mention rate, sentiment, risk, and investigation output.</div>
-            </div>
-            <div class="subsection">
-              <h3>Related monitored articles</h3>
-              <div id="themeArticles" class="stack"></div>
-            </div>
-            <div class="subsection">
-              <h3>Risk analysis</h3>
-              <div id="themeRiskPanel" class="stack"></div>
-            </div>
-            <div class="subsection">
-              <h3>Simulation panel</h3>
-              <div class="sim-controls">
-                <input id="scenarioName" type="text" value="Theme-linked shock scenario" placeholder="Scenario name">
-                <input id="horizonDays" type="number" min="1" value="30">
-                <button class="primary-btn" id="runScenarioBtn">Run scenario</button>
-              </div>
-              <div id="eventBuilder" class="stack compact"></div>
-              <button class="ghost-btn" id="addEventBtn">Add event</button>
-              <div id="simulationResult" class="note-card">Scenario outputs will appear here.</div>
-            </div>
+            </section>
           </div>
         </div>
       </section>
 
-      <section class="view" data-view="map">
-        <div class="content-grid wide-right">
-          <div class="panel section map-panel">
-            <div class="section-head">
-              <div>
-                <div class="section-kicker">Connection Agent</div>
-                <h2>World map of themes, events, and heat zones</h2>
-              </div>
-            </div>
-            <div id="worldMap"></div>
+      <!-- News view -->
+      <section class="view view--news" data-view="news">
+        <section class="card card--news">
+          <header class="card__head">
+            <span class="card__kicker">Live Feed</span>
+            <h2 class="card__title">News monitoring</h2>
+            <p class="card__sub" id="newsCountLabel">All articles</p>
+          </header>
+          <div class="card__body">
+            <input id="newsSearch" type="text" class="search-input" placeholder="Filter by headline, entity, region…">
+            <div id="newsFeed" class="feed-list feed-list--all"></div>
           </div>
+        </section>
+      </section>
 
-          <div class="panel section">
-            <div class="section-head">
-              <div>
-                <div class="section-kicker">Map Intelligence</div>
-                <h2>Regional heat and clickable spots</h2>
-              </div>
+      <!-- Simulation view -->
+      <section class="view view--simulation" data-view="simulation">
+        <section class="card card--simulation">
+          <header class="card__head">
+            <span class="card__kicker">What-if</span>
+            <h2 class="card__title">Scenario simulation</h2>
+            <p class="card__sub">Define events and run a scenario to see market implications.</p>
+          </header>
+          <div class="card__body">
+            <div class="sim-row">
+              <input id="scenarioName" type="text" value="Theme-linked shock scenario" placeholder="Scenario name">
+              <input id="horizonDays" type="number" min="1" value="30" placeholder="Days">
+              <button type="button" class="btn btn--primary" id="runScenarioBtn">Run scenario</button>
             </div>
-            <div id="mapLegend" class="stack"></div>
+            <div id="eventBuilder" class="event-list"></div>
+            <button type="button" class="btn btn--ghost btn--sm" id="addEventBtn">+ Add event</button>
+            <div id="simulationResult" class="sim-result">
+              <p class="sim-result__placeholder">Scenario outputs will appear here.</p>
+            </div>
           </div>
+        </section>
+      </section>
+
+      <!-- Map view -->
+      <section class="view view--map" data-view="map">
+        <div class="map-layout">
+          <section class="card card--map">
+            <header class="card__head">
+              <span class="card__kicker">Connection Agent</span>
+              <h2 class="card__title">World map — themes, events, heat zones</h2>
+            </header>
+            <div class="card__body card__body--no-pad">
+              <div id="worldMap" class="map-container"></div>
+            </div>
+          </section>
+          <aside class="map-legend">
+            <section class="card">
+              <header class="card__head">
+                <span class="card__kicker">Map Intelligence</span>
+                <h2 class="card__title">Regional heat</h2>
+              </header>
+              <div class="card__body">
+                <div id="mapLegend" class="card-list"></div>
+              </div>
+            </section>
+          </aside>
         </div>
       </section>
-    </main>
+    </div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="/static/app.js"></script>
+  <script src="/static/ticker.js"></script>
+  <script>
+    (function() {
+      const hero = document.getElementById('hero');
+      const dashboard = document.getElementById('dashboard');
+      const enterBtn = document.getElementById('heroEnterBtn');
+      const scrollBtn = document.getElementById('heroScrollBtn');
+      if (sessionStorage.getItem('macrosphere-visited') === '1') {
+        hero.classList.add('hero--hidden');
+        dashboard.classList.add('app--visible');
+      }
+      function enter() {
+        hero.classList.add('hero--hidden');
+        dashboard.classList.add('app--visible');
+        sessionStorage.setItem('macrosphere-visited', '1');
+        document.getElementById('pipeline')?.scrollIntoView({ behavior: 'smooth' });
+      }
+      enterBtn?.addEventListener('click', enter);
+      scrollBtn?.addEventListener('click', function(e) {
+        e.preventDefault();
+        enter();
+        setTimeout(function() { document.getElementById('pipeline')?.scrollIntoView({ behavior: 'smooth' }); }, 400);
+      });
+    })();
+  </script>
 </body>
 </html>

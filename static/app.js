@@ -45,6 +45,7 @@ function pct(value) {
 
 function setError(message = "") {
   const el = $("pipelineError");
+  if (!el) return;
   if (!message) {
     el.style.display = "none";
     el.textContent = "";
@@ -54,11 +55,49 @@ function setError(message = "") {
   el.textContent = message;
 }
 
+function setLoadingOverlay(visible, text = "Running pipeline…") {
+  const el = document.getElementById("loadingOverlay");
+  const textEl = document.getElementById("loadingOverlayText");
+  if (!el) return;
+  el.setAttribute("aria-hidden", visible ? "false" : "true");
+  if (textEl) textEl.textContent = text;
+}
+
+function showToast(message, durationMs = 3500) {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = message;
+  el.classList.add("toast--visible");
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => {
+    el.classList.remove("toast--visible");
+  }, durationMs);
+}
+
+function toggleEmptyState() {
+  const hasData = state.latest && (state.latest.themes || []).length > 0;
+  const emptyEl = document.getElementById("emptyState");
+  const contentEl = document.getElementById("overviewContent");
+  if (emptyEl) {
+    emptyEl.setAttribute("aria-hidden", hasData ? "true" : "false");
+    emptyEl.style.display = hasData ? "none" : "block";
+  }
+  if (contentEl) contentEl.style.display = hasData ? "block" : "none";
+}
+
+function parseApiDetail(data) {
+  const d = data?.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d) && d[0]?.msg) return d[0].msg;
+  return null;
+}
+
 async function requestJson(path, options = {}) {
   const response = await fetch(`${apiBase}${path}`, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.detail || `${response.status} ${response.statusText}`);
+    const msg = parseApiDetail(data) || data.detail || `${response.status} ${response.statusText}`;
+    throw new Error(msg);
   }
   return data;
 }
@@ -112,81 +151,141 @@ function computeThemeStats(theme) {
   return { detail, articles, articleCount, mentionRate, avgSentiment, trendDelta };
 }
 
-function renderOverview() {
+function criticalityLevel(score) {
+  if (score >= 0.4) return "Critical";
+  if (score >= 0.25) return "High";
+  if (score >= 0.15) return "Elevated";
+  return "Watch";
+}
+
+function trendIcon(trend) {
+  const t = (trend || "stable").toLowerCase();
+  if (t === "increasing") return "↑";
+  if (t === "decreasing") return "↓";
+  return "→";
+}
+
+function trendLabel(trend) {
+  const t = (trend || "stable").toLowerCase();
+  if (t === "increasing") return "Rising";
+  if (t === "decreasing") return "Falling";
+  return "Stable";
+}
+
+function renderThemeSelector() {
+  const list = document.getElementById("themeSelectorList");
+  if (!list) return;
   const themes = state.latest?.themes || [];
   const criticality = state.latest?.criticality || [];
   const details = state.latest?.theme_details || [];
-  $("themeSummaryGrid").innerHTML = themes.length ? themes.map((theme, index) => {
-    const detail = details[index] || {};
-    const score = Number(criticality[index] || 0);
-    return `
-      <article class="theme-card ${score >= 0.2 ? "hot" : ""} clickable" data-theme="${escapeHtml(theme)}">
-        <div class="theme-top">
-          <div>
-            <div class="section-kicker">Theme</div>
-            <h3>${escapeHtml(theme)}</h3>
-          </div>
-          <div class="score-row">
-            <div class="score">${pct(score)}</div>
-            <button class="ghost-btn explain-btn" data-theme="${escapeHtml(theme)}">Explain why</button>
-          </div>
-        </div>
-        <div class="mini-bar"><span style="width:${Math.max(score * 100, 6)}%"></span></div>
-        <div class="metric-line"><span>Article volume</span><strong>${detail.article_count || 0}</strong></div>
-        <div class="metric-line"><span>Mention rate</span><strong>${(detail.mention_count || 0)}/${Math.max(detail.article_count || 1, 1)}</strong></div>
-        <div class="metric-line"><span>Trend</span><strong>${escapeHtml(detail.trend || "stable")}</strong></div>
-        <div class="tag-list">
-          ${(detail.asset_classes || []).slice(0, 4).map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("")}
-        </div>
-      </article>
-    `;
-  }).join("") : `<div class="empty">Run the pipeline to populate the dashboard.</div>`;
+  if (!themes.length) {
+    list.innerHTML = '<p class="overview-empty">Run the pipeline to see themes.</p>';
+    return;
+  }
+  const indexed = themes.map((t, i) => ({
+    theme: t,
+    score: Number(criticality[i] || 0),
+    detail: details[i] || {},
+  }));
+  indexed.sort((a, b) => b.score - a.score);
+  list.innerHTML = indexed.map((row) => {
+    const level = criticalityLevel(row.score);
+    const levelClass = " theme-selector-item--" + level.toLowerCase().replace(/\s/g, "-");
+    const selected = state.selectedTheme === row.theme ? " theme-selector-item--selected" : "";
+    const trend = row.detail.trend || "stable";
+    return (
+      '<button type="button" class="theme-selector-item' + levelClass + selected + '" data-theme="' + escapeHtml(row.theme) + '" data-select-theme="1">' +
+        '<span class="theme-selector-item__icon" title="' + trendLabel(trend) + '">' + trendIcon(trend) + '</span>' +
+        '<span class="theme-selector-item__name">' + escapeHtml(row.theme) + '</span>' +
+        '<span class="theme-selector-item__pct">' + pct(row.score) + '</span>' +
+      '</button>'
+    );
+  }).join("");
+}
+
+const OVERVIEW_THEMES_SHOW = 6;
+const OVERVIEW_ALERTS_SHOW = 3;
+
+function renderOverviewSummary() {
+  const themes = (state.latest?.themes || []).length;
+  const alerts = (state.latest?.investigations || []).length;
+  const articles = state.latest?.extracted_count || 0;
+  const lastRun = $("lastRefresh") ? $("lastRefresh").textContent : "—";
+  const el = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+  el("overviewNumThemes", themes);
+  el("overviewNumAlerts", alerts);
+  el("overviewNumArticles", articles);
+  el("overviewLastRun", lastRun === "No recent run" ? "—" : lastRun);
+}
+
+function renderOverview() {
+  renderOverviewSummary();
+  const themes = state.latest?.themes || [];
+  const criticality = state.latest?.criticality || [];
+  const details = state.latest?.theme_details || [];
+  const themeGrid = $("themeSummaryGrid");
+  if (themeGrid) {
+    if (!themes.length) {
+      themeGrid.innerHTML = '<p class="overview-empty">Run the pipeline to see themes.</p>';
+    } else {
+      var indexed = themes.map(function (theme, i) {
+        return { theme: theme, score: Number(criticality[i] || 0), detail: details[i] || {} };
+      });
+      indexed.sort(function (a, b) { return b.score - a.score; });
+      var rows = indexed.slice(0, OVERVIEW_THEMES_SHOW);
+      themeGrid.innerHTML = rows.map(function (row, rank) {
+        var rankNum = rank + 1;
+        var score = row.score;
+        var detail = row.detail;
+        var level = criticalityLevel(score);
+        var levelClass = " theme-chip--" + level.toLowerCase().replace(/\s/g, "-");
+        return (
+          '<button type="button" class="theme-chip' + levelClass + ' clickable" data-theme="' + escapeHtml(row.theme) + '" data-open-modal="theme">' +
+            '<span class="theme-chip__rank">#' + rankNum + '</span>' +
+            '<span class="theme-chip__name">' + escapeHtml(row.theme) + '</span>' +
+            '<span class="theme-chip__pct">' + pct(score) + '</span>' +
+          '</button>'
+        );
+      }).join("");
+    }
+  }
 
   const investigations = state.latest?.investigations || [];
-  $("alertBoard").innerHTML = investigations.length ? investigations.map((item) => `
-    <article class="alert-card clickable" data-theme="${escapeHtml(item.theme)}">
-      <div class="card-top">
-        <div>
-          <div class="section-kicker">Alert</div>
-          <h3>${escapeHtml(item.theme)}</h3>
-        </div>
-        <span class="badge alert">${pct(item.metadata?.criticality || 0)}</span>
-      </div>
-      <div class="card-meta">${escapeHtml(item.narrative || "No narrative returned.")}</div>
-      <div class="tag-list">
-        ${(item.trigger_reasons || []).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
-      </div>
-    </article>
-  `).join("") : `<div class="empty">No investigations yet. Lower the threshold or run a broader scan.</div>`;
-
-  $("historyBoard").innerHTML = state.history.themeRuns.length || state.history.insights.length
-    ? [
-        ...state.history.themeRuns.slice(0, 3).map((run) => `
-          <article class="history-card">
-            <div class="card-top"><h3>Theme run</h3><span class="badge">${run.article_count} articles</span></div>
-            <div class="card-meta">${new Date(run.created_at).toLocaleString()}</div>
-            <div class="tag-list">${(run.themes || []).slice(0, 4).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("")}</div>
-          </article>
-        `),
-        ...state.history.insights.slice(0, 3).map((item) => `
-          <article class="history-card clickable" data-theme="${escapeHtml(item.theme)}">
-            <div class="card-top"><h3>${escapeHtml(item.theme)}</h3><span class="badge alert">${pct(item.criticality || 0)}</span></div>
-            <div class="card-meta">${escapeHtml(item.investigation?.narrative || "Stored investigation available.")}</div>
-          </article>
-        `)
-      ].join("")
-    : `<div class="empty">No history stored yet.</div>`;
+  const alertBoard = $("alertBoard");
+  if (alertBoard) {
+    if (!investigations.length) {
+      alertBoard.innerHTML = '<p class="overview-empty">No alerts yet.</p>';
+    } else {
+      const items = investigations.slice(0, OVERVIEW_ALERTS_SHOW);
+      alertBoard.innerHTML = items.map((item) => `
+        <button type="button" class="overview-alert-item clickable" data-theme="${escapeHtml(item.theme)}" data-open-modal="theme">
+          <span class="overview-alert-item__title">${escapeHtml(item.theme)}</span>
+          <span class="badge alert">${pct(item.metadata?.criticality || 0)}</span>
+        </button>
+      `).join("");
+    }
+  }
 
   const risks = state.latest?.risk_analyses || [];
-  $("riskPulseBoard").innerHTML = risks.length ? risks.map((risk) => `
-    <article class="risk-card">
-      <div class="card-top"><h3>${escapeHtml(risk.macro_theme)}</h3></div>
-      <div class="card-meta">${escapeHtml(risk.narrative || "No risk narrative returned.")}</div>
-      <div class="tag-list">
-        ${(risk.market_implications || []).slice(0, 4).map((item) => `<span class="tag">${escapeHtml(item.implication)}</span>`).join("")}
-      </div>
-    </article>
-  `).join("") : `<div class="empty">Risk implications will show here when the risk engine returns output.</div>`;
+  const riskBoard = $("riskPulseBoard");
+  if (riskBoard) {
+    if (!risks.length) {
+      riskBoard.innerHTML = '<p class="overview-empty">No risk data yet. Run the pipeline.</p>';
+    } else {
+      riskBoard.innerHTML = risks.map((risk) => `
+        <div class="risk-pulse-card risk-pulse-card--highlight">
+          <h3 class="risk-pulse-card__title">${escapeHtml(risk.macro_theme)}</h3>
+          <p class="risk-pulse-card__narrative">${escapeHtml(risk.narrative || "")}</p>
+          <div class="risk-pulse-card__impacts">
+            <span class="risk-pulse-card__label">Market implications</span>
+            <div class="tag-list">
+              ${(risk.market_implications || []).map((m) => `<span class="tag tag--risk">${escapeHtml(m.implication)}</span>`).join("")}
+            </div>
+          </div>
+        </div>
+      `).join("");
+    }
+  }
 }
 
 function renderNewsFeed() {
@@ -205,6 +304,9 @@ function renderNewsFeed() {
     const matchesTheme = !selected || articlesForTheme(selected).some((match) => match.source_id === item.source_id && match.headline === item.headline);
     return matchesQuery && matchesTheme;
   });
+
+  const countEl = document.getElementById("newsCountLabel");
+  if (countEl) countEl.textContent = filtered.length === 0 ? "No articles" : `All articles (${filtered.length})`;
 
   $("newsFeed").innerHTML = filtered.length ? filtered.map((item) => `
     <article class="feed-card ${selected && articlesForTheme(selected).includes(item) ? "selected" : ""}">
@@ -243,13 +345,14 @@ function renderThemeDetail() {
     const idx = (state.latest?.themes || []).indexOf(theme);
     return idx >= 0 ? Number(state.latest?.criticality?.[idx] || 0) : 0;
   })();
+  const trend = detail.trend || "stable";
   $("selectedThemeStats").innerHTML = `
-    <div class="detail-card"><span>Criticality</span><strong>${pct(score)}</strong></div>
-    <div class="detail-card"><span>Article volume</span><strong>${articleCount}</strong></div>
-    <div class="detail-card"><span>Mention rate</span><strong>${mentionRate.toFixed(2)}</strong></div>
-    <div class="detail-card"><span>Average sentiment</span><strong>${pct(avgSentiment)}</strong></div>
-    <div class="detail-card"><span>Trend</span><strong>${escapeHtml(detail.trend || "stable")}</strong></div>
-    <div class="detail-card"><span>Source topics</span><strong>${(detail.source_topics || []).length}</strong></div>
+    <div class="detail-card detail-card--icon"><span>Criticality</span><strong>${pct(score)}</strong></div>
+    <div class="detail-card detail-card--icon"><span>Articles</span><strong>${articleCount}</strong></div>
+    <div class="detail-card detail-card--icon"><span>Mention rate</span><strong>${mentionRate.toFixed(2)}</strong></div>
+    <div class="detail-card detail-card--icon"><span>Sentiment</span><strong>${pct(avgSentiment)}</strong></div>
+    <div class="detail-card detail-card--icon"><span>Trend</span><strong class="detail-card__trend" title="${trendLabel(trend)}">${trendIcon(trend)} ${trendLabel(trend)}</strong></div>
+    <div class="detail-card detail-card--icon"><span>Source topics</span><strong>${(detail.source_topics || []).length}</strong></div>
   `;
   $("themeArticles").innerHTML = articles.length ? articles.map((item) => `
     <article class="feed-card">
@@ -263,25 +366,26 @@ function renderThemeDetail() {
 
   const risk = (state.latest?.risk_analyses || []).find((item) => item.macro_theme === theme);
   $("themeRiskPanel").innerHTML = risk ? `
-    <article class="risk-card">
+    <article class="risk-card risk-pulse-card--highlight">
       <div class="card-meta">${escapeHtml(risk.narrative || "")}</div>
       <div class="tag-list">
-        ${(risk.market_implications || []).map((item) => `<span class="tag">${escapeHtml(item.implication)}</span>`).join("")}
+        ${(risk.market_implications || []).map((item) => `<span class="tag tag--risk">${escapeHtml(item.implication)}</span>`).join("")}
       </div>
     </article>
   ` : `<div class="empty">No risk analysis currently stored for this theme.</div>`;
 
   if (state.selectedExplanation && state.selectedExplanation.theme === theme) {
     const inv = state.selectedExplanation.investigation || {};
-    $("explainOutput").innerHTML = `
-      <div><strong>Why this score:</strong> ${escapeHtml((inv.trigger_reasons || []).join(", ") || "No explicit trigger reasons returned.")}</div>
-      <div class="card-meta" style="margin-top:8px;">${escapeHtml(inv.narrative || "")}</div>
-      <div class="tag-list">
-        ${(inv.related_events || []).slice(0, 4).map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("")}
-      </div>
-    `;
+    const narrative = (inv.narrative || "").trim();
+    const reasons = (inv.trigger_reasons || []).filter(Boolean);
+    const signals = (inv.related_events || []).filter(Boolean);
+    var parts = [];
+    if (narrative) parts.push('<div class="explain-narrative">' + escapeHtml(narrative) + '</div>');
+    if (reasons.length) parts.push('<div class="explain-section"><strong>Key factors</strong><p>' + escapeHtml(reasons.join(" · ")) + '</p></div>');
+    if (signals.length) parts.push('<div class="explain-section"><strong>Related signals</strong><div class="tag-list">' + signals.slice(0, 6).map(function (s) { return '<span class="tag">' + escapeHtml(String(s)) + '</span>'; }).join("") + '</div></div>');
+    $("explainOutput").innerHTML = parts.length ? parts.join("") : '<div class="explain-narrative">Investigation complete. Narrative and signals are summarized above in the theme and risk panels.</div>';
   } else {
-    $("explainOutput").textContent = "Click 'Explain why' to run the investigation agent on this theme and explain the criticality score.";
+    $("explainOutput").textContent = "Click \"Explain why\" to run the investigation for this theme.";
   }
 }
 
@@ -305,9 +409,9 @@ function renderMap() {
     const coords = geoLookup[region] || geoLookup.Global;
     const radius = 200000 + Math.max(Number(heat || 0), 0.05) * 1200000;
     const circle = L.circle(coords, {
-      color: "#b24531",
-      fillColor: "#d69438",
-      fillOpacity: 0.28,
+      color: "#00d4aa",
+      fillColor: "#00d4aa",
+      fillOpacity: 0.2,
       radius
     }).addTo(state.mapInstance);
     circle.bindPopup(`<strong>${escapeHtml(region)}</strong><br>Heat: ${pct(heat)}<br>Themes: ${escapeHtml(themes.join(", ") || "None")}`);
@@ -322,16 +426,37 @@ function renderMap() {
 }
 
 function renderMetrics() {
-  $("metricArticles").textContent = state.latest?.extracted_count || 0;
-  $("metricThemes").textContent = (state.latest?.themes || []).length;
-  $("metricAlerts").textContent = (state.latest?.investigations || []).length;
-  $("metricScenario").textContent = state.history.simulations[0] ? pct(state.history.simulations[0].result?.confidence || 0) : "-";
+  const articles = state.latest?.extracted_count || 0;
+  const themes = (state.latest?.themes || []).length;
+  const alerts = (state.latest?.investigations || []).length;
+  const scenario = state.history.simulations[0] ? pct(state.history.simulations[0].result?.confidence || 0) : "—";
+  const prev = state._prevMetrics || {};
+  state._prevMetrics = { articles, themes, alerts, scenario };
+  function setKpi(id, value, prevVal) {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = value;
+    if (prevVal !== undefined && String(prevVal) !== String(value)) {
+      el.classList.add("kpi__value--updated");
+      clearTimeout(el._kpiT);
+      el._kpiT = setTimeout(() => el.classList.remove("kpi__value--updated"), 600);
+    }
+  }
+  setKpi("metricArticles", articles, prev.articles);
+  setKpi("metricThemes", themes, prev.themes);
+  setKpi("metricAlerts", alerts, prev.alerts);
+  setKpi("metricScenario", scenario, prev.scenario);
+  if ($("heroMetric1")) $("heroMetric1").textContent = themes || "—";
+  if ($("heroMetric2")) $("heroMetric2").textContent = articles || "—";
+  if ($("heroMetric3")) $("heroMetric3").textContent = alerts || "—";
 }
 
 function renderAll() {
   renderMetrics();
+  toggleEmptyState();
   renderOverview();
   renderNewsFeed();
+  renderThemeSelector();
   renderThemeDetail();
   renderMap();
 }
@@ -360,8 +485,11 @@ async function refreshState() {
 async function runPipeline() {
   setError("");
   const button = $("runPipelineBtn");
-  setLoading(button, "Running...");
+  const emptyBtn = document.getElementById("emptyStateRunBtn");
+  setLoading(button, "Running…");
+  if (emptyBtn) emptyBtn.disabled = true;
   $("pipelineStatus").textContent = "Pipeline running";
+  setLoadingOverlay(true, "Running pipeline…");
   try {
     state.latest = await requestJson("/api/pipeline/run", {
       method: "POST",
@@ -376,14 +504,21 @@ async function runPipeline() {
     state.selectedTheme = state.latest.themes?.[0] || null;
     state.selectedExplanation = null;
     await refreshHistory();
-    $("pipelineStatus").textContent = "Pipeline complete";
+    $("pipelineStatus").textContent = "Complete";
     $("lastRefresh").textContent = new Date().toLocaleString();
-    renderAll();
-  } catch (error) {
-    $("pipelineStatus").textContent = "Pipeline failed";
-    setError(error.message);
-  } finally {
+    setLoadingOverlay(false);
     clearLoading(button);
+    if (emptyBtn) emptyBtn.disabled = false;
+    renderAll();
+    toggleEmptyState();
+    showToast("Pipeline complete. Themes and alerts updated.");
+    document.getElementById("pipeline")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    setLoadingOverlay(false);
+    clearLoading(button);
+    if (emptyBtn) emptyBtn.disabled = false;
+    $("pipelineStatus").textContent = "Failed";
+    setError(error.message);
   }
 }
 
@@ -402,6 +537,7 @@ async function explainTheme() {
       })
     });
     renderThemeDetail();
+    showToast("Explanation ready.");
   } catch (error) {
     setError(error.message);
   } finally {
@@ -462,14 +598,26 @@ async function runScenario() {
       })
     });
     await refreshHistory();
+    const conf = result.confidence != null ? result.confidence : 0;
+    const confPct = Math.round(conf * 100);
     $("simulationResult").innerHTML = `
-      <div><strong>Confidence:</strong> ${pct(result.confidence || 0)}</div>
-      <div class="card-meta" style="margin-top:8px;">${escapeHtml(result.llm_narrative || "")}</div>
-      <div class="tag-list">
-        ${(result.market_impacts || []).map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("")}
+      <div class="sim-result__confidence-wrap">
+        <span class="sim-result__confidence" aria-label="Confidence ${confPct}%">${confPct}%</span>
+        <span class="sim-result__confidence-label">Confidence</span>
+      </div>
+      <div class="sim-result__narrative">
+        <h4 class="sim-result__heading">Narrative</h4>
+        <p>${escapeHtml(result.llm_narrative || "")}</p>
+      </div>
+      <div class="sim-result__impacts">
+        <h4 class="sim-result__heading">Market impacts</h4>
+        <div class="tag-list sim-result__tags">
+          ${(result.market_impacts || []).map((item) => `<span class="tag tag--sim">${escapeHtml(item)}</span>`).join("")}
+        </div>
       </div>
     `;
     renderMetrics();
+    showToast("Scenario complete.");
   } catch (error) {
     setError(error.message);
   } finally {
@@ -477,14 +625,148 @@ async function runScenario() {
   }
 }
 
+function bindSectionToggles() {
+  document.body.addEventListener("click", function (event) {
+    var toggle = event.target.closest(".card__head--clickable[data-toggle]");
+    if (!toggle) return;
+    var panel = toggle.closest(".card--collapsible");
+    if (!panel) return;
+    var isCollapsed = panel.classList.contains("card--collapsed");
+    panel.classList.toggle("card--collapsed", !isCollapsed);
+    toggle.setAttribute("aria-expanded", isCollapsed);
+    var btn = toggle.querySelector(".card__toggle");
+    if (btn) btn.setAttribute("aria-label", isCollapsed ? "Collapse section" : "Expand section");
+  });
+}
+
+function openModal(title, bodyHtml) {
+  const modal = document.getElementById("overviewModal");
+  const titleEl = document.getElementById("modalTitle");
+  const bodyEl = document.getElementById("modalBody");
+  if (!modal || !titleEl || !bodyEl) return;
+  titleEl.textContent = title;
+  bodyEl.innerHTML = bodyHtml;
+  modal.setAttribute("aria-hidden", "false");
+  modal.classList.add("modal--open");
+  document.body.style.overflow = "hidden";
+}
+
+function closeModal() {
+  const modal = document.getElementById("overviewModal");
+  if (!modal) return;
+  modal.setAttribute("aria-hidden", "true");
+  modal.classList.remove("modal--open");
+  document.body.style.overflow = "";
+}
+
+function buildThemeDetailModalContent(theme) {
+  const idx = (state.latest?.themes || []).indexOf(theme);
+  const score = idx >= 0 ? Number(state.latest?.criticality?.[idx] || 0) : 0;
+  const { detail, articleCount } = computeThemeStats(theme);
+  const inv = (state.latest?.investigations || []).find((i) => i.theme === theme);
+  const risk = (state.latest?.risk_analyses || []).find((r) => r.macro_theme === theme);
+  let html = `
+    <div class="modal-theme-stats">
+      <span><strong>Criticality</strong> ${pct(score)}</span>
+      <span><strong>Articles</strong> ${articleCount}</span>
+      <span><strong>Trend</strong> ${escapeHtml(detail.trend || "stable")}</span>
+    </div>
+  `;
+  if (inv?.narrative) html += `<p class="modal-p">${escapeHtml(inv.narrative)}</p>`;
+  if (risk?.narrative) html += `<p class="modal-p"><strong>Risk:</strong> ${escapeHtml(risk.narrative)}</p>`;
+  if (risk?.market_implications?.length) {
+    html += '<div class="tag-list">' + risk.market_implications.map((m) => `<span class="tag">${escapeHtml(m.implication)}</span>`).join("") + "</div>";
+  }
+  html += `
+    <div class="modal-actions">
+      <button type="button" class="btn btn--primary" data-modal-action="open-lab" data-theme="${escapeHtml(theme)}">Open in Theme Lab</button>
+    </div>
+  `;
+  return html;
+}
+
+function buildAllThemesModalContent() {
+  const themes = state.latest?.themes || [];
+  const criticality = state.latest?.criticality || [];
+  const details = state.latest?.theme_details || [];
+  if (!themes.length) return "<p class=\"overview-empty\">No themes yet.</p>";
+  const indexed = themes.map((t, i) => ({ theme: t, score: Number(criticality[i] || 0), detail: details[i] || {} }));
+  indexed.sort((a, b) => b.score - a.score);
+  return indexed.map((row, rank) => {
+    const level = criticalityLevel(row.score);
+    const levelClass = " theme-chip--" + level.toLowerCase().replace(/\s/g, "-");
+    return (
+      '<button type="button" class="theme-chip' + levelClass + ' theme-chip--full clickable" data-theme="' + escapeHtml(row.theme) + '" data-open-modal="theme">' +
+        '<span class="theme-chip__rank">#' + (rank + 1) + '</span>' +
+        '<span class="theme-chip__name">' + escapeHtml(row.theme) + '</span>' +
+        '<span class="theme-chip__pct">' + pct(row.score) + '</span>' +
+      '</button>'
+    );
+  }).join("");
+}
+
+function buildAllAlertsModalContent() {
+  const investigations = state.latest?.investigations || [];
+  if (!investigations.length) return "<p class=\"overview-empty\">No alerts yet.</p>";
+  return investigations.map((item) => `
+    <button type="button" class="overview-alert-item overview-alert-item--full clickable" data-theme="${escapeHtml(item.theme)}" data-open-modal="theme">
+      <span class="overview-alert-item__title">${escapeHtml(item.theme)}</span>
+      <span class="badge alert">${pct(item.metadata?.criticality || 0)}</span>
+      <p class="overview-alert-item__narrative">${escapeHtml((item.narrative || "").slice(0, 120))}${(item.narrative || "").length > 120 ? "…" : ""}</p>
+    </button>
+  `).join("");
+}
+
+function buildAllHistoryModalContent() {
+  const runs = state.history.themeRuns || [];
+  const insights = state.history.insights || [];
+  if (!runs.length && !insights.length) return "<p class=\"overview-empty\">No history yet.</p>";
+  let html = "";
+  runs.slice(0, 10).forEach((run) => {
+    html += `<div class="overview-list-item"><span class="overview-list-item__title">Run</span><span class="overview-list-item__meta">${run.article_count} articles · ${new Date(run.created_at).toLocaleString()}</span><div class="tag-list">${(run.themes || []).slice(0, 5).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("")}</div></div>`;
+  });
+  insights.slice(0, 10).forEach((item) => {
+    html += `<button type="button" class="overview-list-item clickable" data-theme="${escapeHtml(item.theme)}" data-open-modal="theme"><span class="overview-list-item__title">${escapeHtml(item.theme)}</span><span class="badge alert">${pct(item.criticality || 0)}</span></button>`;
+  });
+  return html || "<p class=\"overview-empty\">No history yet.</p>";
+}
+
+function buildAllRiskModalContent() {
+  const risks = state.latest?.risk_analyses || [];
+  if (!risks.length) return "<p class=\"overview-empty\">No risk data yet.</p>";
+  return risks.map((risk) => `
+    <div class="modal-risk-item">
+      <span class="modal-risk-item__badge">Risk</span>
+      <h4>${escapeHtml(risk.macro_theme)}</h4>
+      <p class="modal-p">${escapeHtml(risk.narrative || "")}</p>
+      <div class="tag-list">${(risk.market_implications || []).map((m) => `<span class="tag">${escapeHtml(m.implication)}</span>`).join("")}</div>
+    </div>
+  `).join("");
+}
+
 function bindThemeSelection() {
   document.body.addEventListener("click", (event) => {
+    const selectThemeBtn = event.target.closest("[data-select-theme]");
+    if (selectThemeBtn && selectThemeBtn.dataset.theme) {
+      state.selectedTheme = selectThemeBtn.dataset.theme;
+      state.selectedExplanation = null;
+      renderThemeSelector();
+      renderThemeDetail();
+      return;
+    }
+    const openModalBtn = event.target.closest("[data-open-modal]");
+    if (openModalBtn && openModalBtn.dataset.openModal === "theme" && openModalBtn.dataset.theme) {
+      event.preventDefault();
+      const theme = openModalBtn.dataset.theme;
+      openModal(theme, buildThemeDetailModalContent(theme));
+      return;
+    }
     const themeEl = event.target.closest("[data-theme]");
-    if (themeEl) {
+    if (themeEl && !themeEl.dataset.openModal) {
       state.selectedTheme = themeEl.dataset.theme;
       state.selectedExplanation = null;
-      document.querySelectorAll(".nav-link").forEach((item) => item.classList.remove("active"));
-      document.querySelector('.nav-link[data-view="themes"]').classList.add("active");
+      document.querySelectorAll(".app-nav__item").forEach((item) => item.classList.remove("active"));
+      document.querySelector('.app-nav__item[data-view="themes"]').classList.add("active");
       document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
       document.querySelector('.view[data-view="themes"]').classList.add("active");
       renderAll();
@@ -495,19 +777,38 @@ function bindThemeSelection() {
       renderThemeDetail();
       explainTheme();
     }
+    if (event.target.closest("[data-modal-action=open-lab]")) {
+      const btn = event.target.closest("[data-modal-action=open-lab]");
+      if (btn && btn.dataset.theme) {
+        state.selectedTheme = btn.dataset.theme;
+        state.selectedExplanation = null;
+        closeModal();
+        document.querySelectorAll(".app-nav__item").forEach((item) => item.classList.remove("active"));
+        document.querySelector('.app-nav__item[data-view="themes"]').classList.add("active");
+        document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
+        document.querySelector('.view[data-view="themes"]').classList.add("active");
+        renderAll();
+      }
+    }
   });
 }
 
 function initNav() {
-  document.querySelectorAll(".nav-link").forEach((button) => {
+  document.querySelectorAll(".app-nav__item").forEach((button) => {
     button.addEventListener("click", () => {
-      document.querySelectorAll(".nav-link").forEach((item) => item.classList.remove("active"));
+      document.querySelectorAll(".app-nav__item").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
       document.querySelectorAll(".view").forEach((view) => {
         view.classList.toggle("active", view.dataset.view === button.dataset.view);
       });
       if (button.dataset.view === "map" && state.mapInstance) {
         setTimeout(() => state.mapInstance.invalidateSize(), 50);
+      }
+      if (button.dataset.view === "news") renderNewsFeed();
+      if (button.dataset.view === "themes") {
+        if (state.latest?.themes?.length && !state.selectedTheme) state.selectedTheme = state.latest.themes[0];
+        renderThemeSelector();
+        renderThemeDetail();
       }
     });
   });
@@ -516,6 +817,7 @@ function initNav() {
 async function init() {
   initNav();
   bindThemeSelection();
+  bindSectionToggles();
   $("runPipelineBtn").addEventListener("click", runPipeline);
   $("refreshStateBtn").addEventListener("click", async () => {
     setError("");
@@ -531,12 +833,39 @@ async function init() {
   $("runScenarioBtn").addEventListener("click", runScenario);
   $("newsSearch").addEventListener("input", renderNewsFeed);
 
-  addEventRow({ event_type: "rate_hike", description: "Central bank surprises with 50 bps hike", region: "US", magnitude: 1.0 });
-  addEventRow({ event_type: "supply_shock", description: "Energy shipping disruption lifts freight and oil costs", region: "Middle East", magnitude: 1.1 });
+  const emptyRunBtn = document.getElementById("emptyStateRunBtn");
+  if (emptyRunBtn) emptyRunBtn.addEventListener("click", runPipeline);
+  const heroEnterBtn = document.getElementById("heroEnterBtn");
+  if (heroEnterBtn) heroEnterBtn.addEventListener("click", () => setTimeout(runPipeline, 400));
+
+  const modalCloseBtn = document.getElementById("modalClose");
+  const modalBackdrop = document.getElementById("modalBackdrop");
+  if (modalCloseBtn) modalCloseBtn.addEventListener("click", closeModal);
+  if (modalBackdrop) modalBackdrop.addEventListener("click", closeModal);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+
+  const openThemesModal = document.getElementById("openThemesModal");
+  const openAlertsModal = document.getElementById("openAlertsModal");
+  const openHistoryModal = document.getElementById("openHistoryModal");
+  const openRiskModal = document.getElementById("openRiskModal");
+  if (openThemesModal) openThemesModal.addEventListener("click", () => openModal("All themes", buildAllThemesModalContent()));
+  if (openAlertsModal) openAlertsModal.addEventListener("click", () => openModal("All alerts", buildAllAlertsModalContent()));
 
   try {
-    await Promise.all([refreshState(), refreshHistory()]);
-    renderAll();
+    const health = await requestJson("/health").catch(() => ({}));
+    const banner = document.getElementById("pipelineNotReadyBanner");
+    if (banner && health && health.pipeline_ready === false) banner.style.display = "block";
+  } catch (_) {}
+
+  const dashboard = document.getElementById("dashboard");
+  const runOnLoad = dashboard && dashboard.classList.contains("app--visible");
+  try {
+    if (runOnLoad) {
+      await runPipeline();
+    } else {
+      await Promise.all([refreshState(), refreshHistory()]);
+      renderAll();
+    }
   } catch (error) {
     setError(error.message);
   }
