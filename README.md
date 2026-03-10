@@ -1,95 +1,224 @@
-# MacroSphere AI – Multi-Agent Macroeconomics Tracker
+# MacroSphere AI
 
-Multi-agent platform that monitors global news, detects macro themes, investigates high-criticality topics, and simulates market implications. Built with **Groq AI** and **LangChain**.
+<p align="center">
+  <strong>A world-class AI-powered team of analysts that never sleep.</strong>
+</p>
 
-## Three pillars
+<p align="center">
+  <em>MacroSphere AI by the Fintech Innovators</em>
+</p>
 
-1. **Specialised agents** – Continuous monitoring and interpretation of global information  
-2. **Autonomous investigation** – Anomaly/trend detection and macro narrative building  
-3. **Real-time simulation** – Macro relationships updated with incoming news and user what-ifs  
+---
+
+## Table of contents
+
+| Section | Description |
+|--------|-------------|
+| [Overview](#overview) | What MacroSphere AI does |
+| [Features](#features) | Capabilities at a glance |
+| [Tech stack](#tech-stack) | Technologies used |
+| [Architecture](#architecture) | Pipeline and data flow |
+| [How to run](#how-to-download-and-run) | Download, setup, and run |
+| [Project structure](#project-structure) | Repository layout |
+| [API reference](#api-reference) | Main endpoints |
+| [Troubleshooting](#troubleshooting) | Common issues and fixes |
+
+---
+
+## Overview
+
+MacroSphere AI is a **multi-agent platform** that:
+
+- Monitors **global news** from multiple APIs (Alpha Vantage, Finnhub, NewsAPI)
+- Detects **macro themes** and assigns criticality
+- Investigates **high-criticality topics** with narratives and signals
+- Simulates **market implications** and what-if scenarios
+- Visualises impact on a **world map**
+
+Everything is grounded in live (or mock) news and linked to source articles. Built for hackathon submission with **FastAPI**, **Groq AI**, **sentence-transformers**, and a single-page dashboard.
+
+---
+
+## Features
+
+| Feature | Description |
+|--------|-------------|
+| **Multi-source news** | Fetches and combines articles from Alpha Vantage, Finnhub, and NewsAPI; mock fallback when keys are missing. |
+| **Theme detection** | Clusters news via embeddings and assigns macro themes with criticality scores. |
+| **Risk Pulse** | Highlighted risk narratives and market implications per theme. |
+| **Investigation** | Deep-dive narratives and signals for high-criticality themes, grounded in many articles. |
+| **Theme Lab** | Browse themes, trends, related articles, and risk analysis with explicit article linking. |
+| **News tab** | View **all** collected articles from every API with search and theme filters. |
+| **Scenario simulator** | Run what-if scenarios (rate hikes, supply shocks, etc.) with presets and “suggest from current themes”. |
+| **World map** | Geographic overlay of regions and thematic impact (dark map, Leaflet). |
+| **Pipeline controls** | Configurable news limit, criticality threshold, and persistence. |
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|-------|------------|
+| **Backend** | FastAPI, Python 3.10+ |
+| **AI / LLM** | Groq (via LangChain), sentence-transformers |
+| **Theme detection** | scikit-learn clustering, embeddings |
+| **Storage** | SQLite (async aiosqlite), SQLAlchemy |
+| **Frontend** | Vanilla JS, CSS, Leaflet.js |
+| **News APIs** | Alpha Vantage, Finnhub, NewsAPI |
+
+---
 
 ## Architecture
 
 ```
-News APIs (Alpha Vantage, Finnhub, mock) → Kafka/stream (or in-memory)
-    → News Monitoring Agent (summarize + extract entities)
-    → Theme Detection Agent (sentence-transformers clustering + criticality)
-    → Investigation Agent (high-criticality deep-dive)
-    → Connection Agent (knowledge graph, map overlay)
-    → Risk Analysis Engine (market implications)
-Simulator: user-defined events → LLM + Monte Carlo → scenario outcomes
+News APIs (Alpha Vantage, Finnhub, NewsAPI)
+         ↓
+   Standardized news (interleaved)
+         ↓
+   News Monitoring Agent (summarize + extract entities, parallelised)
+         ↓
+   Theme Detection Agent (embeddings + clustering + criticality)
+         ↓
+   Investigation Agent (high-criticality narratives + signals)
+         ↓
+   Risk Analysis Engine (market implications per theme)
+         ↓
+   Connection Agent (knowledge graph, map regions)
+         ↓
+   Frontend: Overview | Theme Lab | News | Simulation | World Map
 ```
 
-## Setup
+| Component | Role |
+|-----------|------|
+| **Pipeline** | Runs on demand. Fetches from all APIs, processes a capped set for themes/LLM, returns **all** collected articles so the News tab shows every article. |
+| **Simulator** | User-defined or preset events → scenario outcomes with confidence and market impacts. |
 
-### 1. Environment
+---
+
+## How to download and run
+
+### Prerequisites
+
+| Requirement | Details |
+|-------------|---------|
+| **Python** | 3.10 or higher |
+| **Git** | For cloning (or use “Download ZIP”) |
+
+### Setup steps
+
+#### 1. Clone the repository
 
 ```bash
-cp .env.example .env
-# Set your Groq API key (required for agents)
-# Optional: add news API keys (Alpha Vantage, Finnhub) or use mock data
+git clone https://github.com/Fintech-Innovators/MacroSphereAI.git
+cd MacroSphereAI
 ```
 
-In `.env`:
+<sub>*If you have a zip, extract it and `cd` into the project folder.*</sub>
 
-```env
-GROQ_API_KEY=your-groq-api-key
-# Optional: ALPHA_VANTAGE_API_KEY=... FINNHUB_API_KEY=...
-DATABASE_URL=sqlite+aiosqlite:///./macrosphere.db
-```
+#### 2. Create a virtual environment
 
-### 2. Install dependencies
+| OS | Command |
+|----|---------|
+| **macOS / Linux** | `python3 -m venv .venv` then `source .venv/bin/activate` |
+| **Windows (CMD)** | `python -m venv .venv` then `.venv\Scripts\activate.bat` |
+| **Windows (PowerShell)** | `python -m venv .venv` then `.venv\Scripts\Activate.ps1` |
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate   # or .venv\Scripts\activate on Windows
+# Example (macOS / Linux)
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+#### 3. Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run the API
+<sub>*First run may take a few minutes (sentence-transformers and ML deps).*</sub>
+
+
+#### 4. Run the application
+
+From the project root (with the virtual environment activated):
 
 ```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-- **API docs:** http://localhost:8000/docs  
-- **Health:** http://localhost:8000/health  
+| Link | Purpose |
+|------|---------|
+| [http://localhost:8000](http://localhost:8000) | **Web app** |
+| [http://localhost:8000/docs](http://localhost:8000/docs) | API docs (Swagger) |
+| [http://localhost:8000/health](http://localhost:8000/health) | Health check |
 
-## API overview
+#### 5. Use the app
 
-| Endpoint | Description |
-|----------|-------------|
-| `POST /api/pipeline/run` | Run full pipeline (news → themes → investigation → risk → knowledge graph). Body: `{ "max_news": 20, "criticality_threshold": 0.25, "persist": true }` |
-| `POST /api/simulator/run` | Run a what-if scenario. Body: `{ "scenario_name": "...", "events": [{ "event_type": "rate_hike", "description": "...", "magnitude": 1.0 }], "horizon_days": 30 }` |
-| `GET /api/map` | Get knowledge graph data for map overlay (regions + criticality) |
+| Step | Action |
+|------|--------|
+| 1 | On the landing page, click **“Go to dashboard”**. |
+| 2 | In **Overview**, click **“Run pipeline”** (set news limit & threshold if you like). Wait for the run to finish. |
+| 3 | Browse **Overview** (themes, alerts, Risk Pulse), **Theme Lab**, **News**, **Simulation**, and **World Map**. |
 
-## Agents
+---
 
-- **News Monitoring** – Fetches from configured APIs, normalizes to standard JSON, summarizes with Groq, extracts entities/events.  
-- **Theme Detection** – Aggregates extracted items, clusters via sentence-transformers (`all-MiniLM-L6-v2`), assigns criticality (article share + optional sentiment).  
-- **Investigation** – Triggered for themes above `criticality_threshold`; builds narrative and signals (geopolitical, commodity, rates, etc.).  
-- **Connection** – Knowledge graph (themes, entities, regions, signals); exports structure for a world map heat overlay.  
-- **Risk Analysis** – LLM-generated market implications per theme (rates, bonds, FX, equities).  
-- **Simulator** – User-defined events; LLM scenario narrative + optional Monte Carlo stats.  
+## Project structure
 
-## Data and storage
+```
+MacroSphereAI/
+├── main.py                 # FastAPI app, routes, static files
+├── config.py               # Settings (env vars)
+├── requirements.txt        # Python dependencies
+├── .env                     # Your keys (create in setup; do not commit)
+├── ingestion/
+│   └── adapters.py          # News API adapters (Alpha Vantage, Finnhub, NewsAPI, mock)
+├── agents/
+│   ├── news_monitoring.py   # Summarise + extract entities
+│   ├── theme_detection.py   # Clustering + criticality
+│   ├── investigation.py    # Narratives + signals
+│   ├── risk.py             # Market implications
+│   ├── connection.py       # Knowledge graph + map
+│   ├── simulator.py        # Scenario simulation
+│   └── llm.py              # Groq LLM wrapper
+├── services/
+│   └── pipeline.py         # Pipeline orchestration
+├── schemas/                 # Pydantic models
+├── db/                      # SQLAlchemy models and repositories
+└── static/
+    ├── index.html           # Single-page app
+    ├── app.js               # Dashboard logic
+    ├── app.css              # Styles
+    └── ticker.js            # Ticker strip
+```
 
-- **RDB (SQLite by default):** theme runs, stored insights (investigation + risk), simulator runs.  
-- **Stream:** In-memory queue per topic when Kafka is not configured; each news source can be mapped to a topic.  
+---
 
-## Simulator (what-if)
+## API reference
 
-Send a scenario with a list of events, e.g.:
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/pipeline/run` | Run full pipeline. Body: `{ "max_news": 100, "criticality_threshold": 0.25, "persist": true }` |
+| `GET` | `/api/state/latest` | Latest pipeline result (themes, articles, risk, map) |
+| `GET` | `/api/map` | Map data (regions, themes by region) |
+| `POST` | `/api/theme/explain` | Explain a theme (investigation for selected theme) |
+| `POST` | `/api/simulator/run` | Run scenario. Body: `{ "scenario_name": "...", "events": [...], "horizon_days": 30 }` |
+| `GET` | `/health` | Health and `pipeline_ready` (Groq configured) |
 
-- `rate_hike`, `supply_shock`, `war_escalation`, `banking_stress`  
-- Each event can have `event_type`, `description`, `region`, `magnitude`, `params`.  
+---
 
-The simulator returns outcomes, market impacts, confidence, and an LLM narrative; Monte Carlo stats are included when applicable.
+## Troubleshooting
 
-## Adding more news sources
+| Issue | Solution |
+|-------|----------|
+| **“Pipeline requires GROQ_API_KEY”** | Add `GROQ_API_KEY` to `.env` and restart the server. |
+| **No news / empty News tab** | Add at least one of `ALPHA_VANTAGE_API_KEY`, `FINNHUB_API_KEY`, or `NEWS_API_KEY` for live articles; otherwise mock news is used. |
+| **Port 8000 in use** | Use another port: `uvicorn main:app --reload --host 0.0.0.0 --port 8080`, then open `http://localhost:8080`. |
+| **Slow first pipeline run** | First run downloads the embedding model; later runs are faster. |
 
-Implement an async generator in `ingestion/adapters.py` that yields `StandardizedNewsItem`, then register it in `NewsAdapterRegistry.stream_all()` (and optionally publish to a Kafka topic). Suggested APIs: Perigon, Dow Jones, LexisNexis (with appropriate keys and rate limits).
+---
 
-## License
+---
 
-MIT.
+<p align="center">
+  <em>Built by the Fintech Innovators for NTU NPC Fintech Innovators' Hackathon submission.</em>
+</p>
