@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MacroSphere AI – Simulator & Map</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; background: #0f1419; color: #e6edf3; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .sub { color: #8b949e; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    section { margin-bottom: 2rem; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    button { background: #238636; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #2ea043; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    input, textarea, select { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 0.5rem; border-radius: 6px; width: 100%; max-width: 400px; }
+    label { display: block; margin-bottom: 0.25rem; color: #8b949e; }
+    .event { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+    .event input { flex: 1; }
+    .map-placeholder { min-height: 200px; background: #0d1117; border: 1px dashed #30363d; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #8b949e; }
+    #result { white-space: pre-wrap; font-size: 0.85rem; max-height: 400px; overflow-y: auto; }
+    .error { color: #f85149; }
+  </style>
+</head>
+<body>
+  <h1>MacroSphere AI</h1>
+  <p class="sub">Simulator: drag-and-drop style events → run what-if. Map: region heat from knowledge graph.</p>
+
+  <section>
+    <h2>Run pipeline</h2>
+    <div class="card">
+      <button id="runPipeline">Run pipeline (news → themes → investigate → risk)</button>
+      <pre id="pipelineResult"></pre>
+    </div>
+  </section>
+
+  <section>
+    <h2>Simulator – what-if events</h2>
+    <div class="card">
+      <label>Scenario name</label>
+      <input type="text" id="scenarioName" placeholder="e.g. Fed hike + oil shock" />
+      <label>Events (one per line: event_type, description)</label>
+      <textarea id="eventsText" rows="4" placeholder="rate_hike, Fed raises 50bp&#10;supply_shock, OPEC cut"></textarea>
+      <label>Horizon (days)</label>
+      <input type="number" id="horizonDays" value="30" />
+      <br><br>
+      <button id="runSimulator">Run simulation</button>
+      <pre id="simResult"></pre>
+    </div>
+  </section>
+
+  <section>
+    <h2>Map overlay data</h2>
+    <div class="card">
+      <p class="sub">Region-wise criticality from knowledge graph (heat map source).</p>
+      <div class="map-placeholder" id="mapPlaceholder">Run pipeline first, then GET /api/map for region heat data.</div>
+      <button id="fetchMap">Fetch map data</button>
+      <pre id="mapData"></pre>
+    </div>
+  </section>
+
+  <script>
+    const API = 'http://localhost:8000';
+    async function runPipeline() {
+      const el = document.getElementById('pipelineResult');
+      el.textContent = 'Running…';
+      try {
+        const r = await fetch(API + '/api/pipeline/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ max_news: 15, criticality_threshold: 0.2, persist: true })
+        });
+        const j = await r.json();
+        el.textContent = JSON.stringify(j, null, 2);
+      } catch (e) {
+        el.className = 'error';
+        el.textContent = e.message || String(e);
+      }
+    }
+    async function runSimulator() {
+      const el = document.getElementById('simResult');
+      const name = document.getElementById('scenarioName').value.trim() || 'Scenario';
+      const lines = document.getElementById('eventsText').value.trim().split('\n').filter(Boolean);
+      const events = lines.map(line => {
+        const [event_type, ...rest] = line.split(',').map(s => s.trim());
+        return { event_type: event_type || 'custom', description: rest.join(',').trim() || '', magnitude: 1.0 };
+      });
+      el.textContent = 'Running…';
+      try {
+        const r = await fetch(API + '/api/simulator/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scenario_name: name, events, horizon_days: parseInt(document.getElementById('horizonDays').value) || 30 })
+        });
+        const j = await r.json();
+        el.textContent = JSON.stringify(j, null, 2);
+      } catch (e) {
+        el.className = 'error';
+        el.textContent = e.message || String(e);
+      }
+    }
+    async function fetchMap() {
+      const el = document.getElementById('mapData');
+      el.textContent = 'Loading…';
+      try {
+        const r = await fetch(API + '/api/map');
+        const j = await r.json();
+        el.textContent = JSON.stringify(j, null, 2);
+      } catch (e) {
+        el.className = 'error';
+        el.textContent = e.message || String(e);
+      }
+    }
+    document.getElementById('runPipeline').onclick = runPipeline;
+    document.getElementById('runSimulator').onclick = runSimulator;
+    document.getElementById('fetchMap').onclick = fetchMap;
+  </script>
+</body>
+</html>
