@@ -1,11 +1,20 @@
 # MacroSphere AI
 
 <p align="center">
-  <strong>A world-class AI-powered team of analysts that never sleep.</strong>
+  <strong>A world-class AI-powered team of analysts that never sleeps.</strong>
 </p>
 
 <p align="center">
   <em>MacroSphere AI by the Fintech Innovators</em>
+</p>
+
+<p align"justify">
+  Most macroeconomic intelligence arrives too late, too fragmented, and too shallow to act on. Macrosphere AI is built to fix that.
+The platform runs a continuous, autonomous pipeline of specialised AI agents — each handling a distinct layer of analysis. A News Monitoring Agent ingests financial news across multiple live sources, extracting entities, events, and structured signals from every article. A Theme Detection Agent clusters this data semantically, tracking how narratives evolve over time and scoring each theme by criticality — measuring mention velocity, sentiment shift, and thematic concentration. When a theme crosses a certain criticality threshold, an Investigation Agent activates automatically, mapping causal relationships and identifying exactly which markets, institutions, and asset classes sit in the blast radius.
+Everything connects into a live knowledge graph, rendered across a geographic interface that shows — in real time — where global stress is building and what it links to.
+The centrepiece is the Simulator. Inject a hypothetical event — a central bank reversal, an oil supply shock, a sovereign debt crisis — and the system generates probabilistic market outcomes using Monte Carlo methods, historical pattern matching, and LLM-driven scenario reasoning. It doesn't just describe risk. It models it.
+Macrosphere AI is what a world-class analyst team would look like if it never slept, never missed a signal, and could run a thousand scenarios before markets open.
+
 </p>
 
 ---
