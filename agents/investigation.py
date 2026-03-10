@@ -1,18 +1,10 @@
 """Investigation Agent: deep-dive on high-criticality themes; find related signals and build narrative."""
 import json
-try:
-    from langchain_core.messages import HumanMessage, SystemMessage
-    _LANGCORE_AVAILABLE = True
-except ImportError:
-    HumanMessage = SystemMessage = None
-    _LANGCORE_AVAILABLE = False
 
 from schemas.news import ExtractedEntitiesItem
 from schemas.themes import ThemeWithCriticality
 from schemas.investigation import InvestigationOutput, SignalItem
 from .llm import get_llm
-
-_DEPS_MSG = "LangChain (langchain-core) is required. Install with: pip install langchain-core"
 
 
 INVESTIGATION_SYSTEM = """You are a macro research analyst. Given a macro theme and related news items (events + entities), produce a structured investigation.
@@ -24,7 +16,9 @@ Output valid JSON only with this exact structure:
   ],
   "involved_entities": ["entity1", "entity2"],
   "involved_regions": ["region1", "region2"],
-  "market_impact_areas": ["bonds", "commodities", "fx", "equities", "credit", ...]
+  "market_impact_areas": ["bonds", "commodities", "fx", "equities", "credit", ...],
+  "trigger_reasons": ["high_criticality", "spike_in_article_volume"],
+  "related_events": ["event 1", "event 2"]
 }
 Be specific and factual. Only include signals you can infer from the context."""
 
@@ -33,8 +27,6 @@ class InvestigationAgent:
     """Investigates themes above criticality threshold; uses Groq for narrative and signals."""
 
     def __init__(self, criticality_threshold: float = 0.25):
-        if not _LANGCORE_AVAILABLE:
-            raise ValueError(_DEPS_MSG)
         self.llm = get_llm(temperature=0.2)
         self.criticality_threshold = criticality_threshold
 
@@ -68,12 +60,28 @@ class InvestigationAgent:
     ) -> InvestigationOutput:
         """Run investigation for one theme. Trigger when criticality > threshold or spike."""
         relevant = self._items_for_theme(theme_label, theme_output or ThemeWithCriticality(themes=[], criticality=[], theme_details=[]), items)
+        trigger_reasons = []
+        if criticality >= self.criticality_threshold:
+            trigger_reasons.append("high_criticality")
+        if len(relevant) >= 3:
+            trigger_reasons.append("spike_in_article_volume")
+        avg_sentiment = sum(it.sentiment_score for it in relevant) / max(len(relevant), 1)
+        if avg_sentiment >= 0.65:
+            trigger_reasons.append("negative_or_urgent_sentiment_shift")
         context = "\n".join(
-            f"- Event: {it.event} | Entities: {', '.join(it.entities)}"
+            f"- Event: {it.event} | Entities: {', '.join(it.entities)} | Regions: {', '.join(it.regions)} | Asset classes: {', '.join(it.asset_classes)} | Sentiment: {it.sentiment_score:.2f}"
             for it in relevant[:15]
         )
-        prompt = f"Theme: {theme_label}\nCriticality score: {criticality}\n\nRelated news items:\n{context}"
-        msg = [SystemMessage(content=INVESTIGATION_SYSTEM), HumanMessage(content=prompt)]
+        prompt = (
+            f"Theme: {theme_label}\n"
+            f"Criticality score: {criticality}\n"
+            f"Trigger reasons: {', '.join(trigger_reasons) or 'manual_review'}\n\n"
+            f"Related news items:\n{context}"
+        )
+        msg = [
+            {"role": "system", "content": INVESTIGATION_SYSTEM},
+            {"role": "user", "content": prompt},
+        ]
         out = self.llm.invoke(msg)
         text = out.content.strip()
         if "```json" in text:
@@ -81,7 +89,7 @@ class InvestigationAgent:
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
-            data = {"narrative": text[:500], "signals": [], "involved_entities": [], "involved_regions": [], "market_impact_areas": []}
+            data = {"narrative": text[:500], "signals": [], "involved_entities": [], "involved_regions": [], "market_impact_areas": [], "trigger_reasons": trigger_reasons, "related_events": [it.event for it in relevant[:5]]}
         signals = [
             SignalItem(
                 signal_type=s.get("signal_type", "unknown"),
@@ -98,6 +106,8 @@ class InvestigationAgent:
             involved_entities=data.get("involved_entities", []),
             involved_regions=data.get("involved_regions", []),
             market_impact_areas=data.get("market_impact_areas", []),
+            trigger_reasons=data.get("trigger_reasons", trigger_reasons),
+            related_events=data.get("related_events", [it.event for it in relevant[:5]]),
             related_article_ids=[getattr(it, "source_id", None) or str(i) for i, it in enumerate(relevant) if getattr(it, "source_id", None)],
-            metadata={"criticality": criticality},
+            metadata={"criticality": criticality, "avg_sentiment": avg_sentiment, "item_count": len(relevant)},
         )

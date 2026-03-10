@@ -4,6 +4,8 @@ from __future__ import annotations
 import numpy as np
 from collections import Counter
 from typing import Optional
+import re
+from datetime import datetime
 
 from schemas.news import ExtractedEntitiesItem
 from schemas.themes import ThemeWithCriticality, ThemeOutput
@@ -39,6 +41,83 @@ class ThemeDetectionAgent:
             self._model = _get_embedder()
         return self._model.encode(texts, convert_to_numpy=True)
 
+    def _run_fallback(self, items: list[ExtractedEntitiesItem]) -> ThemeWithCriticality:
+        """Fallback clustering when sentence-transformers/torch is unavailable."""
+        bucketed: dict[str, list[ExtractedEntitiesItem]] = {}
+        for item in items:
+            if item.entities:
+                label = item.entities[0]
+            else:
+                tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]+", item.event)
+                label = " ".join(tokens[:3]) if tokens else item.event[:50] or "uncategorized"
+            bucketed.setdefault(label, []).append(item)
+
+        theme_details = [
+            self._build_theme_output(f"theme_{idx}", label, group)
+            for idx, (label, group) in enumerate(bucketed.items())
+            if len(group) >= self.min_cluster_size
+        ]
+        counts = [t.article_count for t in theme_details]
+        total = sum(counts) or 1
+        criticality = self._criticality(theme_details, bucketed)
+        return ThemeWithCriticality(
+            themes=[t.label for t in theme_details],
+            criticality=criticality,
+            theme_details=theme_details,
+        )
+
+    def _parse_day(self, value: str) -> str:
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return datetime.strptime(value[:19], fmt).strftime("%Y-%m-%d")
+            except Exception:
+                continue
+        return value[:10] if value else "unknown"
+
+    def _trend_for_group(self, group: list[ExtractedEntitiesItem]) -> str:
+        counts: Counter[str] = Counter(self._parse_day(it.publishing_date) for it in group)
+        if len(counts) <= 1:
+            return "increasing" if len(group) >= 3 else "stable"
+        ordered = [counts[day] for day in sorted(counts.keys())]
+        if len(ordered) >= 2 and ordered[-1] > ordered[0]:
+            return "increasing"
+        if len(ordered) >= 2 and ordered[-1] < ordered[0]:
+            return "decreasing"
+        return "stable"
+
+    def _build_theme_output(self, theme_id: str, label: str, group: list[ExtractedEntitiesItem]) -> ThemeOutput:
+        mention_count = sum(1 + len(it.entities) for it in group)
+        source_topics = sorted({it.source_topic for it in group if it.source_topic})
+        regions = sorted({region for it in group for region in it.regions})
+        asset_classes = sorted({asset for it in group for asset in it.asset_classes})
+        representative_events = [it.event for it in group[:3]]
+        return ThemeOutput(
+            theme_id=theme_id,
+            label=label,
+            article_count=len(group),
+            mention_count=mention_count,
+            trend=self._trend_for_group(group),
+            source_topics=source_topics,
+            representative_events=representative_events,
+            regions=regions,
+            asset_classes=asset_classes,
+        )
+
+    def _criticality(self, theme_details: list[ThemeOutput], grouped: dict[str, list[ExtractedEntitiesItem]] | dict[int, list[ExtractedEntitiesItem]]) -> list[float]:
+        article_total = sum(t.article_count for t in theme_details) or 1
+        mention_total = sum(t.mention_count for t in theme_details) or 1
+        scores: list[float] = []
+        for detail in theme_details:
+            group = grouped.get(detail.label) or grouped.get(int(detail.theme_id.split("_")[-1])) or []
+            article_share = detail.article_count / article_total
+            mention_share = detail.mention_count / mention_total
+            sentiment = sum(it.sentiment_score for it in group) / max(len(group), 1) if group else 0.5
+            trend_bonus = 0.15 if detail.trend == "increasing" else (0.05 if detail.trend == "stable" else 0.0)
+            raw = 0.5 * article_share + 0.25 * mention_share + 0.15 * sentiment + trend_bonus
+            scores.append(raw)
+        total = sum(scores) or 1
+        return [score / total for score in scores]
+
     def _label_clusters(self, items: list[ExtractedEntitiesItem], labels: np.ndarray) -> list[ThemeOutput]:
         """Assign a theme label per cluster (most common entity/event terms)."""
         from collections import defaultdict
@@ -57,12 +136,7 @@ class ThemeDetectionAgent:
                 events.append(it.event)
             counter = Counter(all_entities)
             label = counter.most_common(1)[0][0] if counter else (events[0][:50] if events else f"theme_{cid}")
-            theme_details.append(ThemeOutput(
-                theme_id=f"theme_{cid}",
-                label=label,
-                article_count=len(group),
-                trend="increasing" if len(group) >= 3 else "stable",
-            ))
+            theme_details.append(self._build_theme_output(f"theme_{cid}", label, group))
         return theme_details
 
     def run(
@@ -75,16 +149,20 @@ class ThemeDetectionAgent:
             return ThemeWithCriticality(themes=[], criticality=[], theme_details=[])
 
         texts = [f"{it.event} {' '.join(it.entities)}" for it in items]
-        embeddings = self._embed(texts).astype(np.float32)
+        try:
+            embeddings = self._embed(texts).astype(np.float32)
+        except Exception:
+            return self._run_fallback(items)
         # Cosine distance = 1 - cosine_sim; threshold 0.65 -> merge if sim > ~0.35
         labels = _cluster_agglomerative(embeddings, n_clusters=None, distance_threshold=self.distance_threshold)
-        n_clusters = int(labels.max()) + 1
         theme_details = self._label_clusters(items, labels)
 
         themes: list[str] = [t.label for t in theme_details]
-        counts = [t.article_count for t in theme_details]
-        total = sum(counts) or 1
-        criticality = [c / total for c in counts]
+        from collections import defaultdict
+        grouped: dict[int, list[ExtractedEntitiesItem]] = defaultdict(list)
+        for idx, label in enumerate(labels):
+            grouped[int(label)].append(items[idx])
+        criticality = self._criticality(theme_details, grouped)
         if sentiment_weights and len(sentiment_weights) == len(items):
             # optional: weight by sentiment (e.g. more negative -> higher criticality)
             for i, t in enumerate(theme_details):

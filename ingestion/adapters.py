@@ -1,9 +1,13 @@
 """News API adapters: fetch from external APIs and normalize to StandardizedNewsItem."""
-import os
 from datetime import datetime
 from typing import AsyncIterator
 import httpx
 from schemas.news import StandardizedNewsItem
+
+
+def _topic_for_source(source_name: str) -> str:
+    slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in source_name).strip("-")
+    return f"macrosphere-news-{slug or 'general'}"
 
 
 def _normalize_date(d: str | int | None) -> str:
@@ -37,9 +41,15 @@ async def _fetch_alpha_vantage(api_key: str) -> AsyncIterator[StandardizedNewsIt
     for item in data.get("feed", [])[:20]:
         yield StandardizedNewsItem(
             platform="Alpha Vantage",
+            source_name="Alpha Vantage News Sentiment",
+            source_topic=_topic_for_source("alpha-vantage"),
             headline=item.get("title", ""),
             publishing_date=_normalize_date(item.get("time_published")),
-            metadata=item.get("summary", item.get("title", "")),
+            metadata="\n".join(filter(None, [
+                item.get("summary", ""),
+                "Tickers: " + ", ".join(t.get("ticker", "") for t in item.get("ticker_sentiment", [])[:5]) if item.get("ticker_sentiment") else "",
+                "Topics: " + ", ".join(t.get("topic", "") for t in item.get("topics", [])[:5]) if item.get("topics") else "",
+            ])).strip() or item.get("title", ""),
             source_id=item.get("url"),
             url=item.get("url"),
             raw=item,
@@ -60,10 +70,43 @@ async def _fetch_finnhub(api_key: str) -> AsyncIterator[StandardizedNewsItem]:
     for item in (data if isinstance(data, list) else [])[:20]:
         yield StandardizedNewsItem(
             platform="Finnhub",
+            source_name=item.get("source", "Finnhub"),
+            source_topic=_topic_for_source("finnhub"),
             headline=item.get("headline", ""),
             publishing_date=_normalize_date(item.get("datetime")),
             metadata=item.get("summary", item.get("headline", "")),
             source_id=item.get("id") and str(item["id"]),
+            url=item.get("url"),
+            raw=item,
+        )
+
+
+async def _fetch_newsapi(api_key: str) -> AsyncIterator[StandardizedNewsItem]:
+    """NewsAPI top business headlines / macro relevant business headlines."""
+    if not api_key:
+        return
+    url = "https://newsapi.org/v2/top-headlines"
+    params = {
+        "apiKey": api_key,
+        "category": "business",
+        "language": "en",
+        "pageSize": 20,
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.get(url, params=params)
+        if r.status_code != 200:
+            return
+        data = r.json()
+    for item in data.get("articles", [])[:20]:
+        source = item.get("source", {}) or {}
+        yield StandardizedNewsItem(
+            platform=source.get("name", "NewsAPI"),
+            source_name=f"NewsAPI:{source.get('name', 'business-headlines')}",
+            source_topic=_topic_for_source(source.get("name", "newsapi")),
+            headline=item.get("title", ""),
+            publishing_date=_normalize_date(item.get("publishedAt")),
+            metadata="\n".join(filter(None, [item.get("description", ""), item.get("content", "")])).strip() or item.get("title", ""),
+            source_id=item.get("url"),
             url=item.get("url"),
             raw=item,
         )
@@ -81,6 +124,8 @@ async def _mock_sources() -> AsyncIterator[StandardizedNewsItem]:
     for platform, headline, pub_date, meta in mock:
         yield StandardizedNewsItem(
             platform=platform,
+            source_name=platform,
+            source_topic=_topic_for_source(platform),
             headline=headline,
             publishing_date=pub_date,
             metadata=meta,
@@ -97,6 +142,7 @@ class NewsAdapterRegistry:
         has_any = bool(
             getattr(settings, "alpha_vantage_api_key", None)
             or getattr(settings, "finnhub_api_key", None)
+            or getattr(settings, "news_api_key", None)
         )
         if has_any:
             if getattr(settings, "alpha_vantage_api_key", None):
@@ -104,6 +150,9 @@ class NewsAdapterRegistry:
                     yield item
             if getattr(settings, "finnhub_api_key", None):
                 async for item in _fetch_finnhub(settings.finnhub_api_key):
+                    yield item
+            if getattr(settings, "news_api_key", None):
+                async for item in _fetch_newsapi(settings.news_api_key):
                     yield item
         else:
             async for item in _mock_sources():

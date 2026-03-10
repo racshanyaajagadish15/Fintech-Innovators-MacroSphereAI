@@ -19,5 +19,7 @@ class InvestigationOutput(BaseModel):
     involved_entities: list[str] = Field(default_factory=list)
     involved_regions: list[str] = Field(default_factory=list)
     market_impact_areas: list[str] = Field(default_factory=list)
+    trigger_reasons: list[str] = Field(default_factory=list)
+    related_events: list[str] = Field(default_factory=list)
     related_article_ids: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)

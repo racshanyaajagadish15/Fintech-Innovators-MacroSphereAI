@@ -7,7 +7,12 @@ class ThemeOutput(BaseModel):
     theme_id: str
     label: str = Field(..., description="e.g. inflation, ai domination, iran/iraq war")
     article_count: int = 0
+    mention_count: int = 0
     trend: str = Field(default="stable", description="increasing | decreasing | stable")
+    source_topics: list[str] = Field(default_factory=list)
+    representative_events: list[str] = Field(default_factory=list)
+    regions: list[str] = Field(default_factory=list)
+    asset_classes: list[str] = Field(default_factory=list)
 
 
 class ThemeWithCriticality(BaseModel):

@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     alpha_vantage_api_key: str = ""
     finnhub_api_key: str = ""
     news_api_key: str = ""
+    fred_api_key: str = ""
     kafka_bootstrap_servers: str | None = None
     kafka_news_topic: str = "macrosphere-news-raw"
     database_url: str = "sqlite+aiosqlite:///./macrosphere.db"
@@ -17,6 +18,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 @lru_cache

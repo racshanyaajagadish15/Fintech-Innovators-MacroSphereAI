@@ -26,14 +26,13 @@ async def run_pipeline(
     persist: bool = True,
 ):
     """Run full pipeline: fetch news -> standardize -> summarize+extract -> theme detection -> investigate high-criticality -> risk -> knowledge graph."""
-    settings = get_settings()
-    topic = settings.kafka_news_topic
+    get_settings()
 
     # 1. Fetch and standardize news (optionally publish to stream)
-    raw_items = await get_standardized_news(settings)
+    raw_items = await get_standardized_news(get_settings())
     items = raw_items[:max_news]
     for it in items:
-        await publish_standardized(topic, it)
+        await publish_standardized(it.source_topic or it.platform or "macrosphere-news-raw", it)
 
     # 2. News Monitoring: summarize + extract entities
     monitor = NewsMonitoringAgent()
@@ -44,12 +43,25 @@ async def run_pipeline(
             extracted.append(ex)
         except Exception as e:
             extracted.append(
-                ExtractedEntitiesItem(event=it.headline, entities=[], headline=it.headline, platform=it.platform, publishing_date=it.publishing_date, summary=it.metadata[:500])
+                ExtractedEntitiesItem(
+                    event=it.headline,
+                    entities=[],
+                    regions=[],
+                    asset_classes=[],
+                    sentiment_score=0.5,
+                    headline=it.headline,
+                    platform=it.platform,
+                    source_name=it.source_name,
+                    source_topic=it.source_topic,
+                    publishing_date=it.publishing_date,
+                    summary=it.metadata[:500],
+                    key_facts=[],
+                )
             )
 
     # 3. Theme detection
     theme_agent = ThemeDetectionAgent()
-    theme_output = theme_agent.run(extracted)
+    theme_output = theme_agent.run(extracted, sentiment_weights=[item.sentiment_score for item in extracted])
     if persist and _db_available and theme_output.themes:
         await ThemeRunRepository.create(
             themes=theme_output.themes,
@@ -83,6 +95,8 @@ async def run_pipeline(
 
     map_data = conn_agent.to_map_data()
     return {
+        "standardized_news": [i.model_dump() for i in items],
+        "extracted_items": [i.model_dump() for i in extracted],
         "extracted_count": len(extracted),
         "themes": theme_output.themes,
         "criticality": theme_output.criticality,

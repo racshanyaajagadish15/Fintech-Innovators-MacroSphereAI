@@ -3,17 +3,8 @@ import json
 import random
 from typing import Any
 
-try:
-    from langchain_core.messages import HumanMessage, SystemMessage
-    _LANGCORE_AVAILABLE = True
-except ImportError:
-    HumanMessage = SystemMessage = None
-    _LANGCORE_AVAILABLE = False
-
 from schemas.simulator import SimulatorEvent, SimulatorScenario, SimulatorResult
 from .llm import get_llm
-
-_DEPS_MSG = "LangChain (langchain-core) is required. Install with: pip install langchain-core"
 
 
 SIMULATOR_SYSTEM = """You are a macro scenario analyst. Given a set of hypothetical events (e.g. rate hike, supply shock, war escalation), simulate likely outcomes.
@@ -31,8 +22,6 @@ class SimulatorAgent:
     """Runs what-if scenarios: LLM narrative + optional Monte Carlo stats."""
 
     def __init__(self, monte_carlo_runs: int = 100):
-        if not _LANGCORE_AVAILABLE:
-            raise ValueError(_DEPS_MSG)
         self.llm = get_llm(temperature=0.3)
         self.monte_carlo_runs = monte_carlo_runs
 
@@ -63,7 +52,10 @@ class SimulatorAgent:
             for e in scenario.events
         )
         prompt = f"Scenario: {scenario.name or 'Unnamed'}\nHorizon: {scenario.horizon_days} days\n\nEvents:\n{events_desc}\n\nSimulate outcomes as JSON."
-        msg = [SystemMessage(content=SIMULATOR_SYSTEM), HumanMessage(content=prompt)]
+        msg = [
+            {"role": "system", "content": SIMULATOR_SYSTEM},
+            {"role": "user", "content": prompt},
+        ]
         out = self.llm.invoke(msg)
         text = out.content.strip()
         if "```json" in text:

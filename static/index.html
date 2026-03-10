@@ -3,118 +3,188 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MacroSphere AI – Simulator & Map</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; background: #0f1419; color: #e6edf3; }
-    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
-    .sub { color: #8b949e; font-size: 0.9rem; margin-bottom: 1.5rem; }
-    section { margin-bottom: 2rem; }
-    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
-    button { background: #238636; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; }
-    button:hover { background: #2ea043; }
-    button:disabled { opacity: 0.6; cursor: not-allowed; }
-    input, textarea, select { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 0.5rem; border-radius: 6px; width: 100%; max-width: 400px; }
-    label { display: block; margin-bottom: 0.25rem; color: #8b949e; }
-    .event { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
-    .event input { flex: 1; }
-    .map-placeholder { min-height: 200px; background: #0d1117; border: 1px dashed #30363d; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #8b949e; }
-    #result { white-space: pre-wrap; font-size: 0.85rem; max-height: 400px; overflow-y: auto; }
-    .error { color: #f85149; }
-  </style>
+  <title>MacroSphere AI</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <h1>MacroSphere AI</h1>
-  <p class="sub">Simulator: drag-and-drop style events → run what-if. Map: region heat from knowledge graph.</p>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">M</div>
+        <div>
+          <div class="brand-title">MacroSphere AI</div>
+          <div class="brand-sub">Multi-agent macro desk</div>
+        </div>
+      </div>
 
-  <section>
-    <h2>Run pipeline</h2>
-    <div class="card">
-      <button id="runPipeline">Run pipeline (news → themes → investigate → risk)</button>
-      <pre id="pipelineResult"></pre>
-    </div>
-  </section>
+      <nav class="nav">
+        <button class="nav-link active" data-view="overview">Overview</button>
+        <button class="nav-link" data-view="themes">Theme Lab</button>
+        <button class="nav-link" data-view="map">World Map</button>
+      </nav>
 
-  <section>
-    <h2>Simulator – what-if events</h2>
-    <div class="card">
-      <label>Scenario name</label>
-      <input type="text" id="scenarioName" placeholder="e.g. Fed hike + oil shock" />
-      <label>Events (one per line: event_type, description)</label>
-      <textarea id="eventsText" rows="4" placeholder="rate_hike, Fed raises 50bp&#10;supply_shock, OPEC cut"></textarea>
-      <label>Horizon (days)</label>
-      <input type="number" id="horizonDays" value="30" />
-      <br><br>
-      <button id="runSimulator">Run simulation</button>
-      <pre id="simResult"></pre>
-    </div>
-  </section>
+      <div class="run-panel panel">
+        <div class="mini-title">Pipeline Control</div>
+        <label for="maxNews">News limit</label>
+        <input id="maxNews" type="number" min="1" max="50" value="15">
+        <label for="criticalityThreshold">Criticality threshold</label>
+        <input id="criticalityThreshold" type="number" min="0" max="1" step="0.05" value="0.2">
+        <label for="persistRun">Persistence</label>
+        <select id="persistRun">
+          <option value="true" selected>Store run</option>
+          <option value="false">Preview only</option>
+        </select>
+        <button class="primary-btn full" id="runPipelineBtn">Run pipeline</button>
+        <button class="ghost-btn full" id="refreshStateBtn">Refresh state</button>
+        <div class="status-card">
+          <div id="pipelineStatus">Idle</div>
+          <div id="lastRefresh">No recent run</div>
+        </div>
+        <div class="error-banner" id="pipelineError"></div>
+      </div>
+    </aside>
 
-  <section>
-    <h2>Map overlay data</h2>
-    <div class="card">
-      <p class="sub">Region-wise criticality from knowledge graph (heat map source).</p>
-      <div class="map-placeholder" id="mapPlaceholder">Run pipeline first, then GET /api/map for region heat data.</div>
-      <button id="fetchMap">Fetch map data</button>
-      <pre id="mapData"></pre>
-    </div>
-  </section>
+    <main class="main">
+      <section class="hero panel">
+        <div class="eyebrow">Macro Intelligence Workflow</div>
+        <h1>Detect themes, explain criticality, map spillovers, simulate risk.</h1>
+        <p class="hero-copy">
+          This interface uses the current backend to surface top macro themes, live monitored news, investigation logic, risk analysis,
+          scenario simulation, and connection-agent geography in a usable dashboard flow.
+        </p>
+        <div class="hero-metrics">
+          <div class="metric-card"><span>Articles</span><strong id="metricArticles">0</strong></div>
+          <div class="metric-card"><span>Themes</span><strong id="metricThemes">0</strong></div>
+          <div class="metric-card"><span>Alerts</span><strong id="metricAlerts">0</strong></div>
+          <div class="metric-card"><span>Scenario Confidence</span><strong id="metricScenario">-</strong></div>
+        </div>
+      </section>
 
-  <script>
-    const API = 'http://localhost:8000';
-    async function runPipeline() {
-      const el = document.getElementById('pipelineResult');
-      el.textContent = 'Running…';
-      try {
-        const r = await fetch(API + '/api/pipeline/run', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ max_news: 15, criticality_threshold: 0.2, persist: true })
-        });
-        const j = await r.json();
-        el.textContent = JSON.stringify(j, null, 2);
-      } catch (e) {
-        el.className = 'error';
-        el.textContent = e.message || String(e);
-      }
-    }
-    async function runSimulator() {
-      const el = document.getElementById('simResult');
-      const name = document.getElementById('scenarioName').value.trim() || 'Scenario';
-      const lines = document.getElementById('eventsText').value.trim().split('\n').filter(Boolean);
-      const events = lines.map(line => {
-        const [event_type, ...rest] = line.split(',').map(s => s.trim());
-        return { event_type: event_type || 'custom', description: rest.join(',').trim() || '', magnitude: 1.0 };
-      });
-      el.textContent = 'Running…';
-      try {
-        const r = await fetch(API + '/api/simulator/run', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scenario_name: name, events, horizon_days: parseInt(document.getElementById('horizonDays').value) || 30 })
-        });
-        const j = await r.json();
-        el.textContent = JSON.stringify(j, null, 2);
-      } catch (e) {
-        el.className = 'error';
-        el.textContent = e.message || String(e);
-      }
-    }
-    async function fetchMap() {
-      const el = document.getElementById('mapData');
-      el.textContent = 'Loading…';
-      try {
-        const r = await fetch(API + '/api/map');
-        const j = await r.json();
-        el.textContent = JSON.stringify(j, null, 2);
-      } catch (e) {
-        el.className = 'error';
-        el.textContent = e.message || String(e);
-      }
-    }
-    document.getElementById('runPipeline').onclick = runPipeline;
-    document.getElementById('runSimulator').onclick = runSimulator;
-    document.getElementById('fetchMap').onclick = fetchMap;
-  </script>
+      <section class="view active" data-view="overview">
+        <div class="content-grid">
+          <div class="panel section">
+            <div class="section-head">
+              <div>
+                <div class="section-kicker">Main Dashboard</div>
+                <h2>Top macro themes detected</h2>
+              </div>
+            </div>
+            <div id="themeSummaryGrid" class="card-grid"></div>
+          </div>
+
+          <div class="panel section">
+            <div class="section-head">
+              <div>
+                <div class="section-kicker">Key Alerts</div>
+                <h2>What needs attention now</h2>
+              </div>
+            </div>
+            <div id="alertBoard" class="stack"></div>
+          </div>
+        </div>
+
+        <div class="content-grid">
+          <div class="panel section">
+            <div class="section-head">
+              <div>
+                <div class="section-kicker">Institutional Memory</div>
+                <h2>Recent runs and stored insights</h2>
+              </div>
+            </div>
+            <div id="historyBoard" class="stack"></div>
+          </div>
+
+          <div class="panel section">
+            <div class="section-head">
+              <div>
+                <div class="section-kicker">Risk Pulse</div>
+                <h2>Latest theme-to-market implications</h2>
+              </div>
+            </div>
+            <div id="riskPulseBoard" class="stack"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" data-view="themes">
+        <div class="content-grid wide-left">
+          <div class="panel section">
+            <div class="section-head">
+              <div>
+                <div class="section-kicker">Live Feed</div>
+                <h2>News monitoring output</h2>
+              </div>
+            </div>
+            <div class="toolbar">
+              <input id="newsSearch" type="text" placeholder="Filter news by headline, entity, region, or source">
+            </div>
+            <div id="newsFeed" class="stack"></div>
+          </div>
+
+          <div class="panel section sticky-section">
+            <div class="section-head">
+              <div>
+                <div class="section-kicker">Theme Investigation</div>
+                <h2 id="selectedThemeTitle">Select a theme</h2>
+              </div>
+              <button class="secondary-btn" id="explainThemeBtn" disabled>Explain why</button>
+            </div>
+            <div id="selectedThemeStats" class="stats-grid"></div>
+            <div class="subsection">
+              <h3>Theme narrative</h3>
+              <div id="explainOutput" class="note-card">Pick a theme from the dashboard or feed to inspect volume, mention rate, sentiment, risk, and investigation output.</div>
+            </div>
+            <div class="subsection">
+              <h3>Related monitored articles</h3>
+              <div id="themeArticles" class="stack"></div>
+            </div>
+            <div class="subsection">
+              <h3>Risk analysis</h3>
+              <div id="themeRiskPanel" class="stack"></div>
+            </div>
+            <div class="subsection">
+              <h3>Simulation panel</h3>
+              <div class="sim-controls">
+                <input id="scenarioName" type="text" value="Theme-linked shock scenario" placeholder="Scenario name">
+                <input id="horizonDays" type="number" min="1" value="30">
+                <button class="primary-btn" id="runScenarioBtn">Run scenario</button>
+              </div>
+              <div id="eventBuilder" class="stack compact"></div>
+              <button class="ghost-btn" id="addEventBtn">Add event</button>
+              <div id="simulationResult" class="note-card">Scenario outputs will appear here.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" data-view="map">
+        <div class="content-grid wide-right">
+          <div class="panel section map-panel">
+            <div class="section-head">
+              <div>
+                <div class="section-kicker">Connection Agent</div>
+                <h2>World map of themes, events, and heat zones</h2>
+              </div>
+            </div>
+            <div id="worldMap"></div>
+          </div>
+
+          <div class="panel section">
+            <div class="section-head">
+              <div>
+                <div class="section-kicker">Map Intelligence</div>
+                <h2>Regional heat and clickable spots</h2>
+              </div>
+            </div>
+            <div id="mapLegend" class="stack"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="/static/app.js"></script>
 </body>
 </html>

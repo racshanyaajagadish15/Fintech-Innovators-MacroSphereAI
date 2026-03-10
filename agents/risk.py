@@ -1,16 +1,8 @@
 """Risk Analysis Engine: market implications per macro theme using LLM + knowledge context."""
 import json
-try:
-    from langchain_core.messages import HumanMessage, SystemMessage
-    _LANGCORE_AVAILABLE = True
-except ImportError:
-    HumanMessage = SystemMessage = None
-    _LANGCORE_AVAILABLE = False
 
 from schemas.risk import RiskAnalysisOutput, RiskImplication
 from .llm import get_llm
-
-_DEPS_MSG = "LangChain (langchain-core) is required. Install with: pip install langchain-core"
 
 
 RISK_SYSTEM = """You are a macro risk analyst. For the given macro theme and context, list specific market implications.
@@ -29,8 +21,6 @@ class RiskAnalysisEngine:
     """Generates risk implications for macro themes using Groq."""
 
     def __init__(self):
-        if not _LANGCORE_AVAILABLE:
-            raise ValueError(_DEPS_MSG)
         self.llm = get_llm(temperature=0.2)
 
     def run(
@@ -46,7 +36,10 @@ class RiskAnalysisEngine:
         if context:
             prompt += f"Additional context: {context}\n"
         prompt += "List market implications as JSON."
-        msg = [SystemMessage(content=RISK_SYSTEM), HumanMessage(content=prompt)]
+        msg = [
+            {"role": "system", "content": RISK_SYSTEM},
+            {"role": "user", "content": prompt},
+        ]
         out = self.llm.invoke(msg)
         text = out.content.strip()
         if "```json" in text:
