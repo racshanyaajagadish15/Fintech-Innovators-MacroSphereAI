@@ -33,6 +33,11 @@ Given a headline and summary, output valid JSON only:
 {"event": "One sentence describing the key macro/financial event", "entities": ["Entity1", "Entity2", ...], "regions": ["Region1"], "asset_classes": ["rates"], "sentiment_score": 0.0}.
 Entities must be: central banks, governments, regions, companies, economic indicators, or market terms. Use canonical names (e.g. Federal Reserve, not Fed)."""
 
+COMBINED_SYSTEM = """You are a financial news analyst. In ONE response, (1) summarize the article for macro/finance context and (2) extract structured event/entities.
+Return valid JSON only with this exact shape:
+{"summary": "2-4 sentence summary focusing on inflation, growth, rates, commodities, FX, credit, regulation, geopolitics", "key_facts": ["fact1", "fact2"], "event": "One sentence for the key macro/financial event", "entities": ["Entity1", "Entity2"], "regions": ["Region1"], "asset_classes": ["rates"], "sentiment_score": 0.0-1.0}.
+Rules: summary 2-4 sentences; key_facts 2-5 bullets; entities = central banks, governments, regions, companies, indicators (canonical names); sentiment_score 0=neutral, 1=very negative/urgent."""
+
 
 class NewsMonitoringAgent:
     """Summarizes news and extracts entities/events using Groq."""
@@ -69,6 +74,7 @@ class NewsMonitoringAgent:
             key_facts=data.get("key_facts", []),
             metadata=item.metadata,
             source_id=item.source_id,
+            url=getattr(item, "url", None),
         )
 
     def extract_entities(self, item: SummarizedNewsItem) -> ExtractedEntitiesItem:
@@ -100,9 +106,70 @@ class NewsMonitoringAgent:
             summary=item.summary,
             key_facts=item.key_facts,
             source_id=item.source_id,
+            url=getattr(item, "url", None),
         )
 
     def process(self, item: StandardizedNewsItem) -> ExtractedEntitiesItem:
-        """Full pipeline: summarize then extract entities."""
-        summarized = self.summarize(item)
-        return self.extract_entities(summarized)
+        """Full pipeline: one LLM call for summary + entities (faster)."""
+        article = {
+            "headline": (item.headline or "")[:500],
+            "publishing_date": item.publishing_date or "",
+            "metadata": (item.metadata or "")[:2500],
+        }
+        prompt = "Article JSON:\n" + json.dumps(article, ensure_ascii=False)
+        msg = [
+            {"role": "system", "content": COMBINED_SYSTEM},
+            {"role": "user", "content": prompt},
+        ]
+        out = self.llm.invoke(msg)
+        text = out.content.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        if "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return self._fallback_extracted(item)
+        summary = data.get("summary", item.metadata[:500])
+        key_facts = data.get("key_facts", [])
+        event = data.get("event", item.headline)
+        entities = data.get("entities", [])
+        regions = data.get("regions", [])
+        asset_classes = data.get("asset_classes", [])
+        sentiment_score = float(data.get("sentiment_score", 0.5))
+        return ExtractedEntitiesItem(
+            event=event,
+            entities=entities,
+            regions=regions,
+            asset_classes=asset_classes,
+            sentiment_score=sentiment_score,
+            headline=item.headline,
+            platform=item.platform,
+            source_name=item.source_name,
+            source_topic=item.source_topic,
+            publishing_date=item.publishing_date,
+            summary=summary,
+            key_facts=key_facts,
+            source_id=item.source_id,
+            url=getattr(item, "url", None),
+        )
+
+    def _fallback_extracted(self, item: StandardizedNewsItem) -> ExtractedEntitiesItem:
+        """Fallback when combined JSON parse fails."""
+        return ExtractedEntitiesItem(
+            event=item.headline,
+            entities=[],
+            regions=[],
+            asset_classes=[],
+            sentiment_score=0.5,
+            headline=item.headline,
+            platform=item.platform,
+            source_name=item.source_name,
+            source_topic=item.source_topic,
+            publishing_date=item.publishing_date,
+            summary=item.metadata[:500],
+            key_facts=[],
+            source_id=item.source_id,
+            url=getattr(item, "url", None),
+        )

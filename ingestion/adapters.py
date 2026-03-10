@@ -35,7 +35,7 @@ async def _fetch_alpha_vantage(api_key: str) -> AsyncIterator[StandardizedNewsIt
     if not api_key:
         return
     url = "https://www.alphavantage.co/query"
-    params = {"function": "NEWS_SENTIMENT", "apikey": api_key, "limit": 50}
+    params = {"function": "NEWS_SENTIMENT", "apikey": api_key, "limit": 200}
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.get(url, params=params)
@@ -49,7 +49,7 @@ async def _fetch_alpha_vantage(api_key: str) -> AsyncIterator[StandardizedNewsIt
     except Exception as e:
         logger.warning("Alpha Vantage fetch failed: %s", e)
         return
-    for item in feed[:30]:
+    for item in feed[:200]:
         yield StandardizedNewsItem(
             platform="Alpha Vantage",
             source_name="Alpha Vantage News Sentiment",
@@ -78,7 +78,7 @@ async def _fetch_finnhub(api_key: str) -> AsyncIterator[StandardizedNewsItem]:
         if r.status_code != 200:
             return
         data = r.json()
-    for item in (data if isinstance(data, list) else [])[:30]:
+    for item in (data if isinstance(data, list) else [])[:200]:
         yield StandardizedNewsItem(
             platform="Finnhub",
             source_name=item.get("source", "Finnhub"),
@@ -101,14 +101,14 @@ async def _fetch_newsapi(api_key: str) -> AsyncIterator[StandardizedNewsItem]:
         "apiKey": api_key,
         "category": "business",
         "language": "en",
-        "pageSize": 30,
+        "pageSize": 100,
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.get(url, params=params)
         if r.status_code != 200:
             return
         data = r.json()
-    for item in data.get("articles", [])[:30]:
+    for item in data.get("articles", [])[:100]:
         source = item.get("source", {}) or {}
         yield StandardizedNewsItem(
             platform=source.get("name", "NewsAPI"),

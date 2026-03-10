@@ -47,25 +47,17 @@
   <!-- Landing hero -->
   <header class="hero" id="hero">
     <div class="hero__bg">
+      <canvas class="hero__particles" id="heroParticles" aria-hidden="true"></canvas>
       <div class="hero__gradient hero__gradient--1"></div>
       <div class="hero__gradient hero__gradient--2"></div>
     </div>
     <div class="hero__content">
-      <p class="hero__badge">Multi-Agent Macroeconomics</p>
+      <p class="hero__badge">MacroSphere AI by the Fintech Innovators</p>
       <h1 class="hero__headline">
-        <span class="hero__line">Detect themes.</span>
-        <span class="hero__line">Investigate signals.</span>
-        <span class="hero__line">Simulate risk.</span>
+        <span class="hero__line">A world-class AI-powered team of analysts that never sleep</span>
       </h1>
-      <p class="hero__desc">AI analysts monitoring global news, building macro narratives, and forecasting market implications in real time.</p>
       <div class="hero__cta">
-        <button type="button" class="btn btn--primary btn--xl" id="heroEnterBtn">Enter dashboard</button>
-        <a href="#pipeline" class="btn btn--outline btn--xl" id="heroScrollBtn">Run pipeline</a>
-      </div>
-      <div class="hero__stats">
-        <div class="hero__stat"><span class="hero__stat-num" id="heroMetric1">—</span><span class="hero__stat-label">Themes</span></div>
-        <div class="hero__stat"><span class="hero__stat-num" id="heroMetric2">—</span><span class="hero__stat-label">Articles</span></div>
-        <div class="hero__stat"><span class="hero__stat-num" id="heroMetric3">—</span><span class="hero__stat-label">Alerts</span></div>
+        <button type="button" class="btn btn--primary btn--xl" id="heroEnterBtn">Go to dashboard</button>
       </div>
     </div>
     <div class="hero__scroll">
@@ -79,7 +71,7 @@
     <header class="app-header">
       <div class="app-header__brand">
         <div class="logo">
-          <span class="logo__icon">M</span>
+          <span class="logo__icon" aria-hidden="true"></span>
           <span class="logo__name">MacroSphere AI</span>
         </div>
       </div>
@@ -96,54 +88,46 @@
     </header>
 
     <div class="app-body">
-      <!-- Pipeline strip + KPIs -->
-      <section class="strip strip--pipeline" id="pipeline">
-        <div id="pipelineNotReadyBanner" class="banner banner--warn" style="display: none;" role="alert">
-          <span>Pipeline requires <strong>GROQ_API_KEY</strong> in <code>.env</code>. Set it to run the pipeline.</span>
-        </div>
-        <div class="strip__content">
-          <div class="strip__text">
-            <span class="strip__label">Macro Intelligence</span>
-            <h2 class="strip__title">Detect themes, explain criticality, map spillovers, simulate risk.</h2>
-            <p class="strip__desc">Run the pipeline to surface top themes, live news, risk analysis, and scenario simulation.</p>
-          </div>
-          <div class="kpis">
-            <div class="kpi"><span class="kpi__label">Articles</span><span class="kpi__value" id="metricArticles">0</span></div>
-            <div class="kpi"><span class="kpi__label">Themes</span><span class="kpi__value" id="metricThemes">0</span></div>
-            <div class="kpi"><span class="kpi__label">Alerts</span><span class="kpi__value" id="metricAlerts">0</span></div>
-            <div class="kpi"><span class="kpi__label">Scenario</span><span class="kpi__value" id="metricScenario">—</span></div>
-          </div>
-        </div>
-        <div class="strip__controls">
-          <div class="control-group" title="Max articles from all sources (Alpha Vantage, Finnhub, NewsAPI) to analyze in this run.">
-            <label for="maxNews">News limit</label>
-            <input id="maxNews" type="number" min="1" max="100" value="25">
-            <span class="control-hint">Articles to analyze (from all APIs)</span>
-          </div>
-          <div class="control-group" title="Themes above this criticality (0–1) get deep investigation and risk analysis.">
-            <label for="criticalityThreshold">Threshold</label>
-            <input id="criticalityThreshold" type="number" min="0" max="1" step="0.05" value="0.2">
-            <span class="control-hint">Min criticality for investigation</span>
-          </div>
-          <div class="control-group" title="Store run: save themes and insights to history. Preview only: run without saving.">
-            <label for="persistRun">Persistence</label>
-            <select id="persistRun">
-              <option value="true" selected>Store run</option>
-              <option value="false">Preview only</option>
-            </select>
-            <span class="control-hint">Save to history or preview</span>
-          </div>
-          <button type="button" class="btn btn--ghost" id="refreshStateBtn">Refresh</button>
-          <div class="strip__status">
-            <span id="pipelineStatus">Idle</span>
-            <span class="strip__status-time" id="lastRefresh">No recent run</span>
-          </div>
-        </div>
-        <div class="error-banner" id="pipelineError"></div>
-      </section>
-
-      <!-- Overview view -->
+      <!-- Overview view (pipeline card only here) -->
       <section class="view view--overview active" data-view="overview">
+        <!-- Pipeline run overview card: only on Overview -->
+        <section class="strip strip--pipeline strip--pipeline-overview" id="pipeline">
+          <div id="pipelineNotReadyBanner" class="banner banner--warn" style="display: none;" role="alert">
+            <span>Pipeline requires <strong>GROQ_API_KEY</strong> in <code>.env</code>. Set it to run the pipeline.</span>
+          </div>
+          <div class="strip__content">
+            <div class="strip__text">
+              <h2 class="strip__title">Pipeline run</h2>
+              <p id="pipelineRunOverview" class="strip__overview">No run yet. Use the controls below to run.</p>
+            </div>
+          </div>
+          <div class="strip__controls">
+            <div class="control-group" title="Max articles from all sources (Alpha Vantage, Finnhub, NewsAPI) to analyze in this run.">
+              <label for="maxNews">News limit</label>
+              <input id="maxNews" type="number" min="1" max="150" value="100" title="Max articles to analyze from all APIs combined">
+              <span class="control-hint">Articles to analyze (from all APIs)</span>
+            </div>
+            <div class="control-group" title="Themes above this criticality (0–1) get deep investigation and risk analysis.">
+              <label for="criticalityThreshold">Threshold</label>
+              <input id="criticalityThreshold" type="number" min="0" max="1" step="0.05" value="0.2">
+              <span class="control-hint">Min criticality for investigation</span>
+            </div>
+            <div class="control-group" title="Store run: save themes and insights to history. Preview only: run without saving.">
+              <label for="persistRun">Persistence</label>
+              <select id="persistRun">
+                <option value="true" selected>Store run</option>
+                <option value="false">Preview only</option>
+              </select>
+              <span class="control-hint">Save to history or preview</span>
+            </div>
+            <button type="button" class="btn btn--ghost" id="refreshStateBtn">Refresh</button>
+            <div class="strip__status">
+              <span id="pipelineStatus">Idle</span>
+              <span class="strip__status-time" id="lastRefresh">No recent run</span>
+            </div>
+          </div>
+          <div class="error-banner" id="pipelineError"></div>
+        </section>
         <div id="emptyState" class="empty-state" aria-hidden="true">
           <div class="empty-state__inner">
             <div class="empty-state__icon" aria-hidden="true">◇</div>
@@ -269,10 +253,30 @@
             <p class="card__sub">Define events and run a scenario to see market implications.</p>
           </header>
           <div class="card__body">
-            <div class="sim-row">
-              <input id="scenarioName" type="text" value="Theme-linked shock scenario" placeholder="Scenario name">
-              <input id="horizonDays" type="number" min="1" value="30" placeholder="Days">
-              <button type="button" class="btn btn--primary" id="runScenarioBtn">Run scenario</button>
+            <div class="sim-controls">
+              <div class="sim-row">
+                <input id="scenarioName" type="text" value="Theme-linked shock scenario" placeholder="Scenario name">
+                <input id="horizonDays" type="number" min="1" value="30" placeholder="Days">
+                <button type="button" class="btn btn--primary" id="runScenarioBtn">Run scenario</button>
+              </div>
+              <div class="sim-row sim-row--presets">
+                <div class="control-group">
+                  <label for="scenarioPreset">Preset</label>
+                  <select id="scenarioPreset">
+                    <option value="">Custom</option>
+                    <option value="iran_iraq_escalation">Iran–Iraq regional escalation</option>
+                    <option value="gulf_supply">Gulf oil supply disruption</option>
+                    <option value="iran_iraq_conflict">Iran–Iraq conflict spillover</option>
+                    <option value="rate_hike">Rate hike shock</option>
+                    <option value="oil_supply">Oil supply shock</option>
+                    <option value="geopolitical">Geopolitical escalation</option>
+                    <option value="banking_stress">Banking stress</option>
+                    <option value="inflation_surprise">Inflation surprise</option>
+                    <option value="combined">Combined macro shock</option>
+                  </select>
+                </div>
+                <button type="button" class="btn btn--ghost" id="suggestScenarioBtn">Suggest from current themes</button>
+              </div>
             </div>
             <div id="eventBuilder" class="event-list"></div>
             <button type="button" class="btn btn--ghost btn--sm" id="addEventBtn">+ Add event</button>
@@ -319,7 +323,6 @@
       const hero = document.getElementById('hero');
       const dashboard = document.getElementById('dashboard');
       const enterBtn = document.getElementById('heroEnterBtn');
-      const scrollBtn = document.getElementById('heroScrollBtn');
       if (sessionStorage.getItem('macrosphere-visited') === '1') {
         hero.classList.add('hero--hidden');
         dashboard.classList.add('app--visible');
@@ -331,11 +334,6 @@
         document.getElementById('pipeline')?.scrollIntoView({ behavior: 'smooth' });
       }
       enterBtn?.addEventListener('click', enter);
-      scrollBtn?.addEventListener('click', function(e) {
-        e.preventDefault();
-        enter();
-        setTimeout(function() { document.getElementById('pipeline')?.scrollIntoView({ behavior: 'smooth' }); }, 400);
-      });
     })();
   </script>
 </body>

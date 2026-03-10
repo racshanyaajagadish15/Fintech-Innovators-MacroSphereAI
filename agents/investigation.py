@@ -7,10 +7,11 @@ from schemas.investigation import InvestigationOutput, SignalItem
 from .llm import get_llm
 
 
-INVESTIGATION_SYSTEM = """You are a macro research analyst. Given a macro theme and related news items (events + entities), produce a structured investigation.
+INVESTIGATION_SYSTEM = """You are a macro research analyst. Given a macro theme and related news items (events + entities), produce a structured investigation that synthesizes MANY of the articles provided.
+Your narrative and signals must be grounded in the full set of related news items—reference and draw from as many of them as possible, not just one or two.
 Output valid JSON only with this exact structure:
 {
-  "narrative": "2-4 sentence macro narrative summarizing the theme and why it matters for markets",
+  "narrative": "2-5 sentence macro narrative that synthesizes the theme across multiple articles; cite the breadth of sources and why it matters for markets",
   "signals": [
     {"signal_type": "e.g. geopolitical_tension | commodity_effect | rate_expectations | banking_stress", "description": "short description", "regions": ["US", "EU"], "confidence": 0.0-1.0}
   ],
@@ -18,9 +19,9 @@ Output valid JSON only with this exact structure:
   "involved_regions": ["region1", "region2"],
   "market_impact_areas": ["bonds", "commodities", "fx", "equities", "credit", ...],
   "trigger_reasons": ["high_criticality", "spike_in_article_volume"],
-  "related_events": ["event 1", "event 2"]
+  "related_events": ["event 1", "event 2", ...]
 }
-Be specific and factual. Only include signals you can infer from the context."""
+Be specific and factual. Include multiple related_events (at least 5-10 when many articles support the theme). Only include signals you can infer from the context."""
 
 
 class InvestigationAgent:
@@ -36,19 +37,35 @@ class InvestigationAgent:
         theme_output: ThemeWithCriticality,
         items: list[ExtractedEntitiesItem],
     ) -> list[ExtractedEntitiesItem]:
-        """Return items that belong to this theme (by matching entities/event to theme label)."""
+        """Return items that belong to this theme (label match + cluster representative_events)."""
         theme_lower = theme_label.lower()
         out = []
+        seen_ids = set()
         for it in items:
             if theme_lower in it.event.lower():
                 out.append(it)
+                seen_ids.add(id(it))
                 continue
             for e in it.entities:
                 if theme_lower in e.lower() or e.lower() in theme_lower:
                     out.append(it)
+                    seen_ids.add(id(it))
                     break
+        if theme_output and theme_output.theme_details:
+            for td in theme_output.theme_details:
+                if (td.label or "").lower() != theme_lower:
+                    continue
+                rep_set = {r.strip()[:120] for r in (td.representative_events or [])[:25] if r and r.strip()}
+                for it in items:
+                    if id(it) in seen_ids:
+                        continue
+                    ev = (it.event or "").strip()[:120]
+                    if ev and (ev in rep_set or any(ev in r or r in ev for r in rep_set)):
+                        out.append(it)
+                        seen_ids.add(id(it))
+                break
         if not out:
-            out = items[:5]
+            out = items[:15]
         return out
 
     def run(
@@ -70,11 +87,12 @@ class InvestigationAgent:
             trigger_reasons.append("negative_or_urgent_sentiment_shift")
         context = "\n".join(
             f"- Event: {it.event} | Entities: {', '.join(it.entities)} | Regions: {', '.join(it.regions)} | Asset classes: {', '.join(it.asset_classes)} | Sentiment: {it.sentiment_score:.2f}"
-            for it in relevant[:15]
+            for it in relevant[:40]
         )
         prompt = (
             f"Theme: {theme_label}\n"
             f"Criticality score: {criticality}\n"
+            f"Number of related articles: {len(relevant)} (use many in your narrative)\n"
             f"Trigger reasons: {', '.join(trigger_reasons) or 'manual_review'}\n\n"
             f"Related news items:\n{context}"
         )
@@ -89,7 +107,7 @@ class InvestigationAgent:
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
-            data = {"narrative": text[:500], "signals": [], "involved_entities": [], "involved_regions": [], "market_impact_areas": [], "trigger_reasons": trigger_reasons, "related_events": [it.event for it in relevant[:5]]}
+            data = {"narrative": text[:500], "signals": [], "involved_entities": [], "involved_regions": [], "market_impact_areas": [], "trigger_reasons": trigger_reasons, "related_events": [it.event for it in relevant[:15]]}
         signals = [
             SignalItem(
                 signal_type=s.get("signal_type", "unknown"),
@@ -107,7 +125,7 @@ class InvestigationAgent:
             involved_regions=data.get("involved_regions", []),
             market_impact_areas=data.get("market_impact_areas", []),
             trigger_reasons=data.get("trigger_reasons", trigger_reasons),
-            related_events=data.get("related_events", [it.event for it in relevant[:5]]),
+            related_events=data.get("related_events", [it.event for it in relevant[:15]]),
             related_article_ids=[getattr(it, "source_id", None) or str(i) for i, it in enumerate(relevant) if getattr(it, "source_id", None)],
             metadata={"criticality": criticality, "avg_sentiment": avg_sentiment, "item_count": len(relevant)},
         )

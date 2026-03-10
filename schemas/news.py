@@ -34,6 +34,7 @@ class SummarizedNewsItem(BaseModel):
     key_facts: list[str] = Field(default_factory=list)
     metadata: str = ""
     source_id: str | None = None
+    url: str | None = None
 
 
 class ExtractedEntitiesItem(BaseModel):
@@ -51,3 +52,4 @@ class ExtractedEntitiesItem(BaseModel):
     summary: str = ""
     key_facts: list[str] = Field(default_factory=list)
     source_id: str | None = None
+    url: str | None = None

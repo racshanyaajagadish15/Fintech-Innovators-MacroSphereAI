@@ -13,6 +13,7 @@ class ThemeOutput(BaseModel):
     representative_events: list[str] = Field(default_factory=list)
     regions: list[str] = Field(default_factory=list)
     asset_classes: list[str] = Field(default_factory=list)
+    article_indices: list[int] = Field(default_factory=list, description="Indices into extracted_items for articles in this theme")
 
 
 class ThemeWithCriticality(BaseModel):

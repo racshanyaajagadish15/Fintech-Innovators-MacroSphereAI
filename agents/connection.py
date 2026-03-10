@@ -62,6 +62,11 @@ class ConnectionAgent:
     def ingest_themes(self, theme_output: ThemeWithCriticality) -> None:
         for i, (t, c) in enumerate(zip(theme_output.themes, theme_output.criticality)):
             self.add_theme(t, c, theme_id=f"t{i}")
+            if theme_output.theme_details and i < len(theme_output.theme_details):
+                detail = theme_output.theme_details[i]
+                for r in detail.regions or []:
+                    if r and str(r).strip():
+                        self.add_region(str(r).strip(), t)
 
     def ingest_investigation(self, inv: InvestigationOutput) -> None:
         self.add_theme(inv.theme, inv.metadata.get("criticality", 0.5))

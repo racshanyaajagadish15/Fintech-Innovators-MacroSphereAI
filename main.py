@@ -35,6 +35,19 @@ def _clean_pipeline_response(raw: dict[str, Any]) -> dict[str, Any]:
     """Return a minimal, frontend-ready pipeline result (no raw payloads)."""
     return {
         "extracted_count": raw.get("extracted_count", 0),
+        "standardized_news": [
+            {
+                "headline": x.get("headline"),
+                "platform": x.get("platform"),
+                "source_name": x.get("source_name"),
+                "source_topic": x.get("source_topic"),
+                "publishing_date": x.get("publishing_date"),
+                "metadata": (x.get("metadata") or "")[:2000],
+                "source_id": x.get("source_id"),
+                "url": x.get("url"),
+            }
+            for x in (raw.get("standardized_news") or [])
+        ],
         "extracted_items": [
             {
                 "headline": x.get("headline"),
@@ -44,6 +57,7 @@ def _clean_pipeline_response(raw: dict[str, Any]) -> dict[str, Any]:
                 "platform": x.get("platform"),
                 "publishing_date": x.get("publishing_date"),
                 "source_id": x.get("source_id"),
+                "url": x.get("url"),
                 "regions": x.get("regions") or [],
                 "asset_classes": x.get("asset_classes") or [],
                 "sentiment_score": x.get("sentiment_score", 0.5),
@@ -63,6 +77,9 @@ def _clean_pipeline_response(raw: dict[str, Any]) -> dict[str, Any]:
                 "mention_count": t.get("mention_count", 0),
                 "trend": t.get("trend", "stable"),
                 "source_topics": t.get("source_topics") or [],
+                "representative_events": t.get("representative_events") or [],
+                "regions": t.get("regions") or [],
+                "article_indices": t.get("article_indices") or [],
             }
             for t in (raw.get("theme_details") or [])
         ],
@@ -126,7 +143,7 @@ async def startup():
 
 
 class PipelineRequest(BaseModel):
-    max_news: int = 30
+    max_news: int = 100
     criticality_threshold: float = 0.25
     persist: bool = True
 
@@ -251,6 +268,7 @@ async def api_latest_state():
     if _latest_pipeline_result is None:
         return {
             "extracted_count": 0,
+            "standardized_news": [],
             "extracted_items": [],
             "themes": [],
             "criticality": [],
